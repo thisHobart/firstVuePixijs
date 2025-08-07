@@ -4,7 +4,7 @@
     <form @submit.prevent="handleSubmit" class="role-form">
       <label>
         姓名：
-        <input v-model="mainChar.value.name" placeholder="请输入名字" required></input>
+        <input v-model="mainChar.name" placeholder="请输入名字" required></input>
       </label>
       <button type="submit">保存角色</button>
     </form>
