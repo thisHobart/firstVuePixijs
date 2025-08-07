@@ -4,10 +4,13 @@
     <form @submit.prevent="handleSubmit" class="role-form">
       <label>
         姓名：
-        <input v_model="mainCharacter.name" placeholder="请输入名字" required></input>
+        <input v-model="mainCharacter.name" placeholder="请输入名字" required></input>
+        <button type="submit">保存角色</button>
       </label>
     </form>
     <div ref="pixiCanvasContainer"></div>
+    <h2>当前主角信息</h2>
+    <pre>{{mainCharacter}}</pre>
   </div>
 </template>
 
@@ -19,6 +22,14 @@ const pixiApp = ref(null);
 
 onMounted(() => {
   initPixiApp();
+})
+
+const mainCharacter = ref({
+  name: '',
+  gender: 'male',
+  hair: '短发',
+  personality: '温和',
+  background: '平民'
 })
 
 const initPixiApp = async () => {
