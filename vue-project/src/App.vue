@@ -4,50 +4,64 @@
     <form @submit.prevent="handleSubmit" class="role-form">
       <label>
         姓名：
-        <input v-model="mainCharacter.name" placeholder="请输入名字" required></input>
-        <button type="submit">保存角色</button>
+        <input v-model="mainChar.value.name" placeholder="请输入名字" required></input>
       </label>
+      <button type="submit">保存角色</button>
     </form>
     <div ref="pixiCanvasContainer"></div>
     <h2>当前主角信息</h2>
-    <pre>{{mainCharacter}}</pre>
+    <pre>{{ mainChar }}</pre>
   </div>
 </template>
 
 <script setup>
 import * as PIXI from 'pixi.js';
-import { onMounted, ref, } from 'vue';
+import { onMounted, ref } from 'vue';
+import { characterPresets } from './assets/characterPresets';
+
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
+const mainChar = ref(characterPresets[0])
 
 onMounted(() => {
   initPixiApp();
+  handleSubmit();
 })
+function handleSubmit() {
+  // 这里你可以做校验、提交后端、或重绘主角形象
+  // 例如：清空舞台并重新绘制主角
+  if (pixiApp.value) {
+    pixiApp.value.stage.removeChildren()
+    const sprite = mainChar.value.createContainer()
+    sprite.position.set(300, 200)
+    pixiApp.value.stage.addChild(sprite)
+  }
+  alert('角色信息已保存并同步到画面！')
+}
 
-const mainCharacter = ref({
-  name: '',
-  gender: 'male',
-  hair: '短发',
-  personality: '温和',
-  background: '平民'
-})
-
-const initPixiApp = async () => {
+const initPixiApp = () => {
   const container = pixiCanvasContainer.value;
-  const app = new PIXI.Application();
-  await app.init({
+  const app = new PIXI.Application({
     width: 800,
     height: 600,
-    backgroundColor: "#3bc39a"
-  })
+    backgroundColor: 0x3bc39a // 注意v6用16进制数字
+  });
   pixiApp.value = app;
-  container.appendChild(pixiApp.value.canvas);
+  container.appendChild(app.view);
+  const sprite = mainChar.value.createContainer();            // 创建该角色的精灵
+  sprite.position.set(300, 200);                    // 设置显示位置（随你定）
+  app.stage.addChild(sprite);                       // 添加到舞台上
 }
 </script>
 
 <style>
+label {
+  display: block;
+  margin-bottom: 6px;
+}
+
 .foo {
-  background-color: #3bc39a;
+  background-color: #913815;
 }
 
 .pixi_app_container {
