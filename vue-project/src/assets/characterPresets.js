@@ -19,7 +19,7 @@ function createCharacter(options) {
 
       // 头部
       const head = new PIXI.Graphics();
-      head.beginFill(0xFFD580);
+      head.beginFill(0xFFD580); // Skin color
       head.drawCircle(0, 0, 50);
       head.endFill();
       container.addChild(head);
@@ -59,6 +59,18 @@ function createCharacter(options) {
       mouth.quadraticCurveTo(0, 28, 12, 18);
       container.addChild(mouth);
 
+      // 名字和称号
+      const nameText = new PIXI.Text(this.name, { fontSize: 20, fill: 0x000000, align: 'center' });
+      nameText.anchor.set(0.5);
+      nameText.y = 140;
+      container.addChild(nameText);
+
+      const titleText = new PIXI.Text(`(${this.title})`, { fontSize: 16, fill: 0x333333, align: 'center' });
+      titleText.anchor.set(0.5);
+      titleText.y = 165;
+      container.addChild(titleText);
+
+
       // 可以拓展其它配件、换装等
       return container;
     }
@@ -68,30 +80,35 @@ function createCharacter(options) {
 // 导出角色数组（每个角色都带 createContainer 方法和属性）
 export const characterPresets = [
   createCharacter({
-    name: "小明",
+    id: "emperor",
+    name: "玄烨",
+    title: "皇帝",
     gender: "male",
-    hair: "短发",
-    personality: "温和",
-    background: "平民",
-    clothesColor: "#4582EC",
-    hairColor: "#222222"
+    clothesColor: "#FFFF00", // Bright yellow for emperor
+    hairColor: "#111111"
   }),
   createCharacter({
-    name: "阿兰",
+    id: "minister",
+    name: "张廷玉",
+    title: "大臣",
+    gender: "male",
+    clothesColor: "#00008B", // Dark blue for minister
+    hairColor: "#333333"
+  }),
+  createCharacter({
+    id: "maid",
+    name: "苏麻喇姑",
+    title: "宫女",
     gender: "female",
-    hair: "长发",
-    personality: "外向",
-    background: "贵族",
-    clothesColor: "#D55C5A",
-    hairColor: "#885522"
+    clothesColor: "#FFC0CB", // Pink for maid
+    hairColor: "#444444"
   }),
   createCharacter({
-    name: "青云",
+    id: "eunuch",
+    name: "李德全",
+    title: "太监",
     gender: "male",
-    hair: "马尾",
-    personality: "谨慎",
-    background: "武者",
-    clothesColor: "#3A9B56",
-    hairColor: "#334488"
+    clothesColor: "#808080", // Gray for eunuch
+    hairColor: "#222222"
   })
 ];

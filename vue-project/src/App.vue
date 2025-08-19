@@ -1,16 +1,11 @@
 <template>
   <div class="pixi_app_container">
-    <h1>PixiJS角色自定义示例</h1>
-    <form @submit.prevent="handleSubmit" class="role-form">
-      <label>
-        姓名：
-        <input v-model="mainChar.name" placeholder="请输入名字" required></input>
-      </label>
-      <button type="submit">保存角色</button>
-    </form>
-    <div ref="pixiCanvasContainer"></div>
-    <h2>当前主角信息</h2>
-    <pre>{{ mainChar }}</pre>
+    <h1>古代互动小说：宫廷风云</h1>
+    <h2>场景：金銮殿</h2>
+    <div ref="pixiCanvasContainer" class="canvas-container"></div>
+    <div class="dialogue-box">
+      <p>{{ currentDialogue }}</p>
+    </div>
   </div>
 </template>
 
@@ -18,25 +13,23 @@
 import * as PIXI from 'pixi.js';
 import { onMounted, ref } from 'vue';
 import { characterPresets } from './assets/characterPresets';
+import { dialogueData } from './dialogue.js';
 
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
-const mainChar = ref(characterPresets[0])
+const currentDialogue = ref("点击角色开始对话。"); // Updated placeholder
 
 onMounted(() => {
   initPixiApp();
-  handleSubmit();
+  setupScene();
 })
-function handleSubmit() {
-  // 这里你可以做校验、提交后端、或重绘主角形象
-  // 例如：清空舞台并重新绘制主角
-  if (pixiApp.value) {
-    pixiApp.value.stage.removeChildren()
-    const sprite = mainChar.value.createContainer()
-    sprite.position.set(300, 200)
-    pixiApp.value.stage.addChild(sprite)
+
+const showDialogue = (characterId) => {
+  const dialogue = dialogueData[characterId]?.greeting;
+  if (dialogue) {
+    const characterName = characterPresets.find(c => c.id === characterId)?.name;
+    currentDialogue.value = `${characterName}: "${dialogue}"`;
   }
-  alert('角色信息已保存并同步到画面！')
 }
 
 const initPixiApp = () => {
@@ -44,27 +37,64 @@ const initPixiApp = () => {
   const app = new PIXI.Application({
     width: 800,
     height: 600,
-    backgroundColor: 0x3bc39a // 注意v6用16进制数字
+    backgroundColor: 0x1a1a1a, // A darker, more serious background
   });
   pixiApp.value = app;
   container.appendChild(app.view);
-  const sprite = mainChar.value.createContainer();            // 创建该角色的精灵
-  sprite.position.set(300, 200);                    // 设置显示位置（随你定）
-  app.stage.addChild(sprite);                       // 添加到舞台上
+}
+
+const setupScene = () => {
+  if (!pixiApp.value) return;
+
+  const stage = pixiApp.value.stage;
+  stage.removeChildren(); // Clear previous sprites
+
+  const positions = [
+    { x: 400, y: 150 }, // Emperor in the center top
+    { x: 200, y: 350 }, // Minister on the left
+    { x: 600, y: 350 }, // Eunuch on the right
+    { x: 400, y: 450 }, // Maid in the front
+  ];
+
+  characterPresets.forEach((character, index) => {
+    const sprite = character.createContainer();
+    sprite.position.set(positions[index].x, positions[index].y);
+
+    // Make sprite interactive
+    sprite.interactive = true;
+    sprite.buttonMode = true; // Show a pointer cursor on hover
+    sprite.on('pointerdown', () => showDialogue(character.id));
+
+    stage.addChild(sprite);
+  });
 }
 </script>
 
 <style>
-label {
-  display: block;
-  margin-bottom: 6px;
-}
-
-.foo {
-  background-color: #913815;
-}
-
 .pixi_app_container {
+  position: relative;
+  text-align: center;
   background-color: #f0f0f0;
+}
+
+.canvas-container {
+  display: inline-block;
+}
+
+.dialogue-box {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 760px;
+  min-height: 100px;
+  background-color: rgba(0, 0, 0, 0.7);
+  border: 2px solid #fff;
+  border-radius: 10px;
+  color: #fff;
+  padding: 10px 20px;
+  text-align: left;
+  font-size: 18px;
+  box-sizing: border-box;
 }
 </style>
