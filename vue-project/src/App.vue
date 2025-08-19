@@ -3,33 +3,84 @@
     <h1>古代互动小说：宫廷风云</h1>
     <h2>场景：金銮殿</h2>
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
-    <div class="dialogue-box">
-      <p>{{ currentDialogue }}</p>
+
+    <div v-if="activeConversation" class="dialogue-box" @click="handleDialogueClick">
+      <p class="speaker-name">{{ currentSpeakerName }}</p>
+      <p class="dialogue-text">{{ currentDialogueText }}</p>
+      <div v-if="currentChoices.length" class="choices-container">
+        <button v-for="(choice, index) in currentChoices" :key="index" @click.stop="selectChoice(choice.nextNode)">
+          {{ choice.text }}
+        </button>
+      </div>
+    </div>
+    <div v-else class="dialogue-box-placeholder">
+      <p>点击NPC开始对话</p>
     </div>
   </div>
 </template>
 
 <script setup>
 import * as PIXI from 'pixi.js';
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, computed } from 'vue';
 import { characterPresets } from './assets/characterPresets';
 import { dialogueData } from './dialogue.js';
 
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
-const currentDialogue = ref("点击角色开始对话。"); // Updated placeholder
 
-onMounted(() => {
-  initPixiApp();
-  setupScene();
-})
+// Dialogue state
+const activeConversation = ref(null); // e.g., 'emperor'
+const currentDialogueNodeId = ref(null); // e.g., 'start'
 
-const showDialogue = (characterId) => {
-  const dialogue = dialogueData[characterId]?.greeting;
-  if (dialogue) {
-    const characterName = characterPresets.find(c => c.id === characterId)?.name;
-    currentDialogue.value = `${characterName}: "${dialogue}"`;
+const currentDialogueNode = computed(() => {
+  if (!activeConversation.value || !currentDialogueNodeId.value) return null;
+  return dialogueData[activeConversation.value]?.[currentDialogueNodeId.value];
+});
+
+const currentSpeakerName = computed(() => {
+  const speakerId = currentDialogueNode.value?.speaker;
+  if (speakerId === 'system') return '系统提示';
+  return characterPresets.find(c => c.id === speakerId)?.name || '';
+});
+
+const currentDialogueText = computed(() => {
+  return currentDialogueNode.value?.text || '';
+});
+
+const currentChoices = computed(() => {
+  return currentDialogueNode.value?.choices || [];
+});
+
+
+const startConversation = (characterId) => {
+  if (characterId === 'player' || activeConversation.value) return;
+  activeConversation.value = characterId;
+  currentDialogueNodeId.value = 'start';
+};
+
+const selectChoice = (nextNodeId) => {
+  if (nextNodeId) {
+    currentDialogueNodeId.value = nextNodeId;
+  } else {
+    endConversation();
   }
+};
+
+const endConversation = () => {
+  activeConversation.value = null;
+  currentDialogueNodeId.value = null;
+}
+
+const handleDialogueClick = () => {
+    // If there are no choices, clicking the box advances the dialogue or ends it
+    if (currentChoices.value.length === 0) {
+        const nextNode = currentDialogueNode.value?.nextNode;
+        if (nextNode) {
+            currentDialogueNodeId.value = nextNode;
+        } else {
+            endConversation();
+        }
+    }
 }
 
 const initPixiApp = () => {
@@ -37,7 +88,7 @@ const initPixiApp = () => {
   const app = new PIXI.Application({
     width: 800,
     height: 600,
-    backgroundColor: 0x1a1a1a, // A darker, more serious background
+    backgroundColor: 0x1a1a1a,
   });
   pixiApp.value = app;
   container.appendChild(app.view);
@@ -45,29 +96,28 @@ const initPixiApp = () => {
 
 const setupScene = () => {
   if (!pixiApp.value) return;
-
   const stage = pixiApp.value.stage;
-  stage.removeChildren(); // Clear previous sprites
+  stage.removeChildren();
 
   const positions = [
-    { x: 400, y: 150 }, // Emperor in the center top
-    { x: 200, y: 350 }, // Minister on the left
-    { x: 600, y: 350 }, // Eunuch on the right
-    { x: 400, y: 450 }, // Maid in the front
+    { x: 400, y: 500 }, { x: 400, y: 150 }, { x: 200, y: 300 },
+    { x: 600, y: 300 }, { x: 100, y: 450 },
   ];
 
   characterPresets.forEach((character, index) => {
     const sprite = character.createContainer();
     sprite.position.set(positions[index].x, positions[index].y);
-
-    // Make sprite interactive
     sprite.interactive = true;
-    sprite.buttonMode = true; // Show a pointer cursor on hover
-    sprite.on('pointerdown', () => showDialogue(character.id));
-
+    sprite.buttonMode = true;
+    sprite.on('pointerdown', () => startConversation(character.id));
     stage.addChild(sprite);
   });
 }
+
+onMounted(() => {
+  initPixiApp();
+  setupScene();
+});
 </script>
 
 <style>
@@ -75,26 +125,65 @@ const setupScene = () => {
   position: relative;
   text-align: center;
   background-color: #f0f0f0;
+  width: 800px;
+  margin: auto;
 }
 
 .canvas-container {
   display: inline-block;
 }
 
-.dialogue-box {
+.dialogue-box, .dialogue-box-placeholder {
   position: absolute;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
   width: 760px;
-  min-height: 100px;
-  background-color: rgba(0, 0, 0, 0.7);
+  min-height: 120px;
+  background-color: rgba(0, 0, 0, 0.8);
   border: 2px solid #fff;
   border-radius: 10px;
   color: #fff;
   padding: 10px 20px;
-  text-align: left;
-  font-size: 18px;
   box-sizing: border-box;
+  font-size: 18px;
+}
+.dialogue-box-placeholder {
+    text-align: center;
+    padding-top: 45px;
+    font-style: italic;
+    color: #aaa;
+}
+
+.speaker-name {
+  font-weight: bold;
+  color: #f0c54f;
+  margin: 0 0 5px 0;
+}
+
+.dialogue-text {
+  margin: 0 0 15px 0;
+}
+
+.choices-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.choices-container button {
+  width: 100%;
+  padding: 10px;
+  background-color: #4a4a4a;
+  border: 1px solid #777;
+  color: #fff;
+  border-radius: 5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.choices-container button:hover {
+  background-color: #6a6a6a;
 }
 </style>

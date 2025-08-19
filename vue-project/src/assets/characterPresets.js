@@ -80,6 +80,14 @@ function createCharacter(options) {
 // 导出角色数组（每个角色都带 createContainer 方法和属性）
 export const characterPresets = [
   createCharacter({
+    id: "player",
+    name: "你",
+    title: "新科状元",
+    gender: "male",
+    clothesColor: "#B22222", // Firebrick red for the player
+    hairColor: "#000000"
+  }),
+  createCharacter({
     id: "emperor",
     name: "玄烨",
     title: "皇帝",
