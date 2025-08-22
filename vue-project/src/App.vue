@@ -23,19 +23,13 @@
 import * as PIXI from 'pixi.js';
 import { onMounted, ref, computed } from 'vue';
 import { characterPresets } from './assets/characterPresets';
-import { dialogueData } from './dialogue.js';
 
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
 
 // Dialogue state
 const activeConversation = ref(null); // e.g., 'emperor'
-const currentDialogueNodeId = ref(null); // e.g., 'start'
-
-const currentDialogueNode = computed(() => {
-  if (!activeConversation.value || !currentDialogueNodeId.value) return null;
-  return dialogueData[activeConversation.value]?.[currentDialogueNodeId.value];
-});
+const currentDialogueNode = ref(null); // The actual dialogue node object from the backend
 
 const currentSpeakerName = computed(() => {
   const speakerId = currentDialogueNode.value?.speaker;
@@ -51,16 +45,36 @@ const currentChoices = computed(() => {
   return currentDialogueNode.value?.choices || [];
 });
 
-
-const startConversation = (characterId) => {
-  if (characterId === 'player' || activeConversation.value) return;
-  activeConversation.value = characterId;
-  currentDialogueNodeId.value = 'start';
+const fetchDialogueNode = async (character, node) => {
+  try {
+    const response = await fetch('http://127.0.0.1:8000/api/dialogue', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ character, node }),
+    });
+    if (!response.ok) {
+      throw new Error('Network response was not ok');
+    }
+    const data = await response.json();
+    currentDialogueNode.value = data;
+  } catch (error) {
+    console.error('There was a problem with the fetch operation:', error);
+    // Handle error, maybe show a message to the user
+    endConversation();
+  }
 };
 
-const selectChoice = (nextNodeId) => {
+const startConversation = async (characterId) => {
+  if (characterId === 'player' || activeConversation.value) return;
+  activeConversation.value = characterId;
+  await fetchDialogueNode(characterId, 'start');
+};
+
+const selectChoice = async (nextNodeId) => {
   if (nextNodeId) {
-    currentDialogueNodeId.value = nextNodeId;
+    await fetchDialogueNode(activeConversation.value, nextNodeId);
   } else {
     endConversation();
   }
@@ -68,15 +82,15 @@ const selectChoice = (nextNodeId) => {
 
 const endConversation = () => {
   activeConversation.value = null;
-  currentDialogueNodeId.value = null;
+  currentDialogueNode.value = null;
 }
 
-const handleDialogueClick = () => {
+const handleDialogueClick = async () => {
     // If there are no choices, clicking the box advances the dialogue or ends it
     if (currentChoices.value.length === 0) {
-        const nextNode = currentDialogueNode.value?.nextNode;
-        if (nextNode) {
-            currentDialogueNodeId.value = nextNode;
+        const nextNodeId = currentDialogueNode.value?.nextNode;
+        if (nextNodeId) {
+            await fetchDialogueNode(activeConversation.value, nextNodeId);
         } else {
             endConversation();
         }
