@@ -33,43 +33,56 @@ character_personas = {
 }
 
 def generate_dialogue(character, conversation_history):
-    persona = character_personas.get(character, "你是一个通用的NPC。")
-
-    assistant = autogen.AssistantAgent(
-        name=character,
-        llm_config=llm_config,
-        system_message=persona
-    )
-
-    user_proxy = autogen.UserProxyAgent(
-        name="user_proxy",
-        human_input_mode="NEVER",
-        max_consecutive_auto_reply=1,
-        is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
-        code_execution_config=False,
-    )
-
-    # Convert conversation history to a format autogen understands
-    chat_history = []
-    for msg in conversation_history:
-        chat_history.append({"role": "user" if msg['role'] == 'player' else 'assistant', "content": msg['content']})
-
-    # The last message from the player is the one we want the assistant to respond to
-    last_message = chat_history[-1]['content']
-
-    user_proxy.initiate_chat(
-        assistant,
-        message=last_message,
-        clear_history=True # Start fresh for each turn
-    )
-
-    # The response is the last message from the assistant
-    response_text = assistant.last_message()["content"]
-
     try:
-        # The prompt asks the LLM to return JSON, so we parse it
-        response_json = json.loads(response_text)
-        return response_json
-    except json.JSONDecodeError:
-        # If the LLM fails to return valid JSON, wrap it in the expected structure
-        return {"speaker": character, "text": response_text, "nextNode": "end"}
+        persona = character_personas.get(character, "你是一个通用的NPC。")
+
+        assistant = autogen.AssistantAgent(
+            name=character,
+            llm_config=llm_config,
+            system_message=persona
+        )
+
+        user_proxy = autogen.UserProxyAgent(
+            name="user_proxy",
+            human_input_mode="NEVER",
+            max_consecutive_auto_reply=1,
+            is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
+            code_execution_config=False,
+        )
+
+        # Convert conversation history to a format autogen understands
+        chat_history = []
+        for msg in conversation_history:
+            chat_history.append({"role": "user" if msg['role'] == 'player' else 'assistant', "content": msg['content']})
+
+        # The last message from the player is the one we want the assistant to respond to
+        last_message = chat_history[-1]['content']
+
+        print("Attempting to initiate chat with LLM...")
+        user_proxy.initiate_chat(
+            assistant,
+            message=last_message,
+            clear_history=True # Start fresh for each turn
+        )
+        print("LLM chat completed.")
+
+        # The response is the last message from the assistant
+        response_text = assistant.last_message()["content"]
+
+        try:
+            # The prompt asks the LLM to return JSON, so we parse it
+            response_json = json.loads(response_text)
+            return response_json
+        except json.JSONDecodeError:
+            # If the LLM fails to return valid JSON, wrap it in the expected structure
+            return {"speaker": character, "text": response_text, "nextNode": "end"}
+    except Exception as e:
+        print(f"!!!!!!!! AN ERROR OCCURRED IN generate_dialogue !!!!!!!!")
+        print(f"Error type: {type(e)}")
+        print(f"Error details: {e}")
+        # When an error occurs, return a structured error message to the frontend
+        return {
+            "speaker": "system",
+            "text": f"抱歉，调用AI时出现错误: {e}",
+            "nextNode": "end"
+        }
