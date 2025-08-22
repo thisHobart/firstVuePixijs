@@ -60,12 +60,12 @@ function createCharacter(options) {
       container.addChild(mouth);
 
       // 名字和称号
-      const nameText = new PIXI.Text(this.name, { fontSize: 20, fill: 0x000000, align: 'center' });
+      const nameText = new PIXI.Text(this.name, { fontSize: 20, fill: 0xffffff, align: 'center' });
       nameText.anchor.set(0.5);
       nameText.y = 140;
       container.addChild(nameText);
 
-      const titleText = new PIXI.Text(`(${this.title})`, { fontSize: 16, fill: 0x333333, align: 'center' });
+      const titleText = new PIXI.Text(`(${this.title})`, { fontSize: 16, fill: 0x89dd7c, align: 'center' });
       titleText.anchor.set(0.5);
       titleText.y = 165;
       container.addChild(titleText);

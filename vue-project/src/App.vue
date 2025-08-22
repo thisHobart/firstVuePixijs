@@ -86,9 +86,9 @@ const handleDialogueClick = () => {
 const initPixiApp = () => {
   const container = pixiCanvasContainer.value;
   const app = new PIXI.Application({
-    width: 800,
-    height: 600,
-    backgroundColor: 0x1a1a1a,
+    width: 1024,
+    height: 768,
+    backgroundColor: 0xf1c588,
   });
   pixiApp.value = app;
   container.appendChild(app.view);
@@ -125,7 +125,7 @@ onMounted(() => {
   position: relative;
   text-align: center;
   background-color: #f0f0f0;
-  width: 800px;
+  width: 1024px;
   margin: auto;
 }
 
@@ -138,21 +138,22 @@ onMounted(() => {
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  width: 760px;
-  min-height: 120px;
+  width: 700px;
+  height: 100px;
+  overflow-y: auto;
   background-color: rgba(0, 0, 0, 0.8);
   border: 2px solid #fff;
   border-radius: 10px;
   color: #fff;
-  padding: 10px 20px;
+  padding: 5px 20px;
   box-sizing: border-box;
   font-size: 18px;
 }
 .dialogue-box-placeholder {
     text-align: center;
-    padding-top: 45px;
+    padding-top: 20px;
     font-style: italic;
-    color: #aaa;
+    color: #36d78c;
 }
 
 .speaker-name {
