@@ -23,6 +23,7 @@ class DialogueRequest(BaseModel):
 
 @app.post("/api/dialogue")
 async def dialogue(request: DialogueRequest):
+    print(f"Received request for character: {request.character}, node: {request.node}")
     # For now, we'll create a simple conversation history.
     # In a more advanced setup, the client would send the history.
     conversation_history = [
