@@ -7,17 +7,19 @@ load_dotenv()
 
 api_key = os.getenv("OPENAI_API_KEY")
 model = os.getenv("MODEL", "gpt-4")
+api_base = os.getenv("OPENAI_API_URL")
 
 # Check if the API key is set
 if not api_key or api_key == "your_api_key_here":
     raise ValueError("错误: OPENAI_API_KEY 未在 .env 文件中设置。请添加您的 API 密钥后重试。")
 else:
-    config_list = [
-        {
-            "model": model,
-            "api_key": api_key,
-        }
-    ]
+    config = {
+        "model": model,
+        "api_key": api_key,
+    }
+    if api_base:
+        config["base_url"] = api_base
+    config_list = [config]
 
 llm_config = {
     "config_list": config_list,
