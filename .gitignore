@@ -1,2 +1,109 @@
-2Dmodels/
-test/
+requirement.txt
+*.txt
+test
+.env
+venv
+
+# ######################## #
+#  IDE / Editor Configs  #
+# ######################## #
+# PyCharm
+.idea/
+
+# Visual Studio Code
+.vscode/
+
+# Sublime Text
+*.sublime-workspace
+
+# Vim & Emacs swap files
+*.swp
+*~
+
+# ######################## #
+#    Python Specific     #
+# ######################## #
+# Virtual environments - 绝对要忽略！
+venv/
+env/
+.venv/
+.env/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+wheels/
+*.spec
+
+# Test artifacts
+.pytest_cache/
+.tox/
+htmlcov/
+.coverage
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# ######################## #
+#  Node.js / Frontend    #
+#  (Vue, React, etc.)    #
+# ######################## #
+# Dependencies - 绝对要忽略！
+node_modules/
+
+# Build output
+dist/
+.output/
+build/
+
+# Log files
+npm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+
+# Local config files
+.env.local
+.env.*.local
+
+# ######################## #
+# Operating System Files #
+# ######################## #
+# macOS
+.DS_Store
+.AppleDouble
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ######################## #
+#  Logs & Temporary Files  #
+# ######################## #
+logs/
+*.log
+tmp/
+
+# ######################## #
+#   Sensitive Information  #
+# 绝对不要提交这些文件！   #
+# ######################## #
+# Environment variables
+# 应该提交一个 .env.example 文件作为模板
+.env
+
+# Credentials & Secrets
+credentials.json
+*.pem
+*.key
+config.local.js
