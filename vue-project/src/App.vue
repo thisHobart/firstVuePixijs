@@ -31,7 +31,9 @@ const pixiApp = ref(null);
 // Dialogue state
 const activeConversation = ref(null);
 const currentDialogueNode = ref(null);
-const playerInput = ref(''); // New ref for player input
+const playerInput = ref('');
+// New ref for managing the complete conversation history
+const conversationHistory = ref([]);
 
 const currentSpeakerName = computed(() => {
   const speakerId = currentDialogueNode.value?.speaker;
@@ -43,42 +45,67 @@ const currentDialogueText = computed(() => {
   return currentDialogueNode.value?.text || '';
 });
 
-const fetchDialogueNode = async (character, node) => {
-  if (!node) return; // Do not send empty requests
+const fetchDialogueNode = async (character) => {
+  // The 'node' parameter is replaced by using the conversationHistory
+  if (conversationHistory.value.length === 0) return;
+
+  console.log("正在发送到后端的历史记录:", JSON.stringify(conversationHistory.value, null, 2));
   try {
     const response = await fetch('http://127.0.0.1:8000/api/dialogue', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ character, node }),
+      // Correctly formatted body
+      body: JSON.stringify({
+        character: character,
+        history: conversationHistory.value
+      }),
     });
     if (!response.ok) {
-      throw new Error('Network response was not ok');
+      throw new Error(`网络响应错误: ${response.statusText}`);
     }
     const data = await response.json();
     currentDialogueNode.value = data;
+    // Add AI response to history
+    conversationHistory.value.push({ role: data.speaker || 'assistant', content: data.text });
   } catch (error) {
-    console.error('There was a problem with the fetch operation:', error);
-    endConversation();
+    console.error('Fetch操作出现问题:', error);
+    currentDialogueNode.value = {
+        speaker: 'system',
+        text: `无法连接到服务器: ${error.message}`,
+        nextNode: 'end'
+    };
+    // Do not end conversation, allow user to see the error
   }
 };
 
 const startConversation = async (characterId) => {
   if (characterId === 'player' || activeConversation.value) return;
   activeConversation.value = characterId;
-  await fetchDialogueNode(characterId, 'start');
+  // Initialize history with a starting message for the AI to respond to
+  conversationHistory.value = [{ role: 'user', content: '你好' }];
+  currentDialogueNode.value = { speaker: 'player', text: '你好' };
+  await fetchDialogueNode(characterId);
 };
 
 const sendPlayerInput = async () => {
-  if (playerInput.value.trim() === '') return;
-  await fetchDialogueNode(activeConversation.value, playerInput.value.trim());
+  const trimmedInput = playerInput.value.trim();
+  if (trimmedInput === '' || !activeConversation.value) return;
+
+  // Add user message to history
+  conversationHistory.value.push({ role: 'user', content: trimmedInput });
+  // Update UI immediately for better UX
+  currentDialogueNode.value = { speaker: 'player', text: trimmedInput };
+
+  await fetchDialogueNode(activeConversation.value);
   playerInput.value = '';
 };
 
 const endConversation = () => {
   activeConversation.value = null;
   currentDialogueNode.value = null;
+  conversationHistory.value = []; // Clear history
 }
 
 const handleDialogueClick = async () => {
