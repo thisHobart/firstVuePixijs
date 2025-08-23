@@ -3,6 +3,7 @@ requirement.txt
 test
 .env
 venv
+ven
 
 # ######################## #
 #  IDE / Editor Configs  #
