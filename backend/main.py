@@ -1,43 +1,58 @@
-from fastapi import FastAPI                     # FastAPI 主类 (FastAPI main class)
-from fastapi.middleware.cors import CORSMiddleware  # 跨域中间件 (CORS middleware)
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any
+from fastapi.concurrency import run_in_threadpool  # 导入线程池工具
 
-app = FastAPI()  # 创建 FastAPI 应用 (Create FastAPI app)
+from agent import generate_dialogue
+
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],   # 前端 Vite dev server origin (without trailing slash)
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-
 )
 
-from pydantic import BaseModel
-from agent import generate_dialogue
+
+# --- 重新设计 API 请求体，使其更具扩展性 ---
+class Message(BaseModel):
+    role: str
+    content: str
+
 
 class DialogueRequest(BaseModel):
     character: str
-    node: str
-    # The 'node' here can be interpreted as the player's last action/choice text
-    # or a special node id like 'start'.
+    # 接收完整的对话历史
+    history: List[Message] = Field(..., min_items=1)
+
 
 @app.post("/api/dialogue")
 async def dialogue(request: DialogueRequest):
-    # For now, we'll create a simple conversation history.
-    # In a more advanced setup, the client would send the history.
-    conversation_history = [
-        {"role": "player", "content": request.node}
-    ]
+    print(f"Received request for character: {request.character}")
+    print(f"Conversation history: {request.history}")
 
-    response = generate_dialogue(request.character, conversation_history)
+    # 将 Pydantic 模型转换为 agent 函数需要的字典列表
+    conversation_history_dict = [msg.model_dump() for msg in request.history]
+
+    # --- 使用线程池异步执行耗时的AI调用，防止阻塞 ---
+    response = await run_in_threadpool(
+        generate_dialogue,
+        request.character,
+        conversation_history_dict
+    )
+
     return response
 
-# ←↓↓↓↓↓↓↓↓ 添加这段入口入口，Run main.py 时即启动 Uvicorn ↓↓↓↓↓↓↓↓↓↓
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
-        "main:app",        # 格式："模块名:FastAPI实例名"
-        host="127.0.0.1",   # 监听本机地址
-        port =8000,          # 端口
-        reload=True        # 热重载
+        "main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True
     )

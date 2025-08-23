@@ -4,13 +4,14 @@
     <h2>场景：金銮殿</h2>
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
 
-    <div v-if="activeConversation" class="dialogue-box" @click="handleDialogueClick">
+    <div v-if="activeConversation" class="dialogue-box">
       <p class="speaker-name">{{ currentSpeakerName }}</p>
-      <p class="dialogue-text">{{ currentDialogueText }}</p>
-      <div v-if="currentChoices.length" class="choices-container">
-        <button v-for="(choice, index) in currentChoices" :key="index" @click.stop="selectChoice(choice.nextNode)">
-          {{ choice.text }}
-        </button>
+      <p class="dialogue-text" @click="handleDialogueClick">{{ currentDialogueText }}</p>
+
+      <!-- Choices replaced by input field -->
+      <div class="input-container">
+        <input v-model="playerInput" @keyup.enter="sendPlayerInput" placeholder="你说……" />
+        <button @click="sendPlayerInput">发送</button>
       </div>
     </div>
     <div v-else class="dialogue-box-placeholder">
@@ -28,8 +29,9 @@ const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
 
 // Dialogue state
-const activeConversation = ref(null); // e.g., 'emperor'
-const currentDialogueNode = ref(null); // The actual dialogue node object from the backend
+const activeConversation = ref(null);
+const currentDialogueNode = ref(null);
+const playerInput = ref(''); // New ref for player input
 
 const currentSpeakerName = computed(() => {
   const speakerId = currentDialogueNode.value?.speaker;
@@ -41,11 +43,8 @@ const currentDialogueText = computed(() => {
   return currentDialogueNode.value?.text || '';
 });
 
-const currentChoices = computed(() => {
-  return currentDialogueNode.value?.choices || [];
-});
-
 const fetchDialogueNode = async (character, node) => {
+  if (!node) return; // Do not send empty requests
   try {
     const response = await fetch('http://127.0.0.1:8000/api/dialogue', {
       method: 'POST',
@@ -61,7 +60,6 @@ const fetchDialogueNode = async (character, node) => {
     currentDialogueNode.value = data;
   } catch (error) {
     console.error('There was a problem with the fetch operation:', error);
-    // Handle error, maybe show a message to the user
     endConversation();
   }
 };
@@ -72,12 +70,10 @@ const startConversation = async (characterId) => {
   await fetchDialogueNode(characterId, 'start');
 };
 
-const selectChoice = async (nextNodeId) => {
-  if (nextNodeId) {
-    await fetchDialogueNode(activeConversation.value, nextNodeId);
-  } else {
-    endConversation();
-  }
+const sendPlayerInput = async () => {
+  if (playerInput.value.trim() === '') return;
+  await fetchDialogueNode(activeConversation.value, playerInput.value.trim());
+  playerInput.value = '';
 };
 
 const endConversation = () => {
@@ -86,14 +82,13 @@ const endConversation = () => {
 }
 
 const handleDialogueClick = async () => {
-    // If there are no choices, clicking the box advances the dialogue or ends it
-    if (currentChoices.value.length === 0) {
-        const nextNodeId = currentDialogueNode.value?.nextNode;
-        if (nextNodeId) {
-            await fetchDialogueNode(activeConversation.value, nextNodeId);
-        } else {
-            endConversation();
-        }
+    // This function can be used for advancing dialogue if there are no choices/inputs needed
+    // For now, the main interaction is via the input field.
+    const nextNodeId = currentDialogueNode.value?.nextNode;
+    if (nextNodeId && !currentDialogueNode.value?.choices?.length) { // Only advance if no choices
+        await fetchDialogueNode(activeConversation.value, nextNodeId);
+    } else if (!nextNodeId && !currentDialogueNode.value?.choices?.length) {
+        // endConversation(); // Decide if clicking ends conversation
     }
 }
 
@@ -152,14 +147,13 @@ onMounted(() => {
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  width: 700px;
-  height: 100px;
-  overflow-y: auto;
+  width: 800px; /* Wider for input */
+  min-height: 150px; /* Taller for input */
   background-color: rgba(0, 0, 0, 0.8);
   border: 2px solid #fff;
   border-radius: 10px;
   color: #fff;
-  padding: 5px 20px;
+  padding: 15px 20px;
   box-sizing: border-box;
   font-size: 18px;
 }
@@ -173,32 +167,42 @@ onMounted(() => {
 .speaker-name {
   font-weight: bold;
   color: #f0c54f;
-  margin: 0 0 5px 0;
+  margin: 0 0 10px 0;
 }
 
 .dialogue-text {
   margin: 0 0 15px 0;
+  cursor: pointer;
 }
 
-.choices-container {
+.input-container {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
-.choices-container button {
-  width: 100%;
+.input-container input {
+  flex-grow: 1;
   padding: 10px;
+  border-radius: 5px;
+  border: 1px solid #555;
+  background-color: #333;
+  color: #fff;
+  font-size: 16px;
+}
+
+.input-container button {
+  padding: 10px 20px;
   background-color: #4a4a4a;
   border: 1px solid #777;
   color: #fff;
   border-radius: 5px;
-  text-align: left;
   cursor: pointer;
   transition: background-color 0.2s;
+  font-size: 16px;
 }
 
-.choices-container button:hover {
+.input-container button:hover {
   background-color: #6a6a6a;
 }
 </style>
