@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 import os
 import json
-from autogen_agentchat import AssistantAgent, UserProxyAgent
+from autogen import AssistantAgent, UserProxyAgent
 from typing import Dict
 
 load_dotenv()
