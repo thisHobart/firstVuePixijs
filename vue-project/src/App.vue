@@ -5,7 +5,12 @@
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
 
     <div v-if="activeConversation" class="dialogue-box">
-      <p class="speaker-name">{{ currentSpeakerName }}</p>
+      <p class="speaker-name">
+        {{ currentSpeakerName }}
+        <span v-if="currentFavorability !== null" class="favorability-display">
+          好感度: {{ currentFavorability }}
+        </span>
+      </p>
       <p class="dialogue-text" @click="handleDialogueClick">{{ currentDialogueText }}</p>
 
       <!-- Choices replaced by input field -->
@@ -27,6 +32,7 @@ import { characterPresets } from './assets/characterPresets';
 
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
+const characterStates = ref({});
 
 // Dialogue state
 const activeConversation = ref(null);
@@ -39,6 +45,12 @@ const currentSpeakerName = computed(() => {
   const speakerId = currentDialogueNode.value?.speaker;
   if (speakerId === 'system') return '系统提示';
   return characterPresets.find(c => c.id === speakerId)?.name || '';
+});
+
+const currentFavorability = computed(() => {
+  const speakerId = currentDialogueNode.value?.speaker;
+  if (!speakerId || speakerId === 'player' || speakerId === 'system') return null;
+  return characterStates.value[speakerId]?.favorability;
 });
 
 const currentDialogueText = computed(() => {
@@ -69,6 +81,12 @@ const fetchDialogueNode = async (character) => {
     currentDialogueNode.value = data;
     // Add AI response to history
     conversationHistory.value.push({ role: data.speaker || 'assistant', content: data.text });
+
+    // Update favorability
+    if (data.favorabilityChange && characterStates.value[character]) {
+      characterStates.value[character].favorability += data.favorabilityChange;
+    }
+
   } catch (error) {
     console.error('Fetch操作出现问题:', error);
     currentDialogueNode.value = {
@@ -151,6 +169,15 @@ const setupScene = () => {
 }
 
 onMounted(() => {
+  // Initialize character states from presets
+  characterPresets.forEach(preset => {
+    if (preset.id !== 'player') {
+      characterStates.value[preset.id] = {
+        favorability: preset.favorability
+      };
+    }
+  });
+
   initPixiApp();
   setupScene();
 });
@@ -195,6 +222,12 @@ onMounted(() => {
   font-weight: bold;
   color: #f0c54f;
   margin: 0 0 10px 0;
+}
+
+.favorability-display {
+  margin-left: 20px;
+  color: #89dd7c;
+  font-style: italic;
 }
 
 .dialogue-text {

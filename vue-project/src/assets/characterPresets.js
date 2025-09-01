@@ -93,7 +93,8 @@ export const characterPresets = [
     title: "皇帝",
     gender: "male",
     clothesColor: "#FFFF00", // Bright yellow for emperor
-    hairColor: "#111111"
+    hairColor: "#111111",
+    favorability: 50
   }),
   createCharacter({
     id: "minister",
@@ -101,7 +102,8 @@ export const characterPresets = [
     title: "大臣",
     gender: "male",
     clothesColor: "#00008B", // Dark blue for minister
-    hairColor: "#333333"
+    hairColor: "#333333",
+    favorability: 50
   }),
   createCharacter({
     id: "maid",
@@ -109,7 +111,8 @@ export const characterPresets = [
     title: "宫女",
     gender: "female",
     clothesColor: "#FFC0CB", // Pink for maid
-    hairColor: "#444444"
+    hairColor: "#444444",
+    favorability: 50
   }),
   createCharacter({
     id: "eunuch",
@@ -117,6 +120,7 @@ export const characterPresets = [
     title: "太监",
     gender: "male",
     clothesColor: "#808080", // Gray for eunuch
-    hairColor: "#222222"
+    hairColor: "#222222",
+    favorability: 50
   })
 ];
