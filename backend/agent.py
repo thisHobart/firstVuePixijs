@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 import os
 import json
-from autogen import AssistantAgent, UserProxyAgent
+from autogen_agentchat import AssistantAgent, UserProxyAgent
 from typing import Dict
 
 load_dotenv()
@@ -33,11 +33,12 @@ llm_config = {
 
 character_personas = {
     "emperor": (
-        "你是一位威严而睿智的古代中国皇帝。"
+        "你是一位威言而睿智的古代中国皇帝。"
         "你的话语简洁、有力，充满威严。"
-        "你要根据玩家的选择，生成符合皇帝身份的回答。"
-        "请以JSON格式返回，包含'speaker', 'text', 和 'choices'(如果需要)或'nextNode'。"
-        "例如：{'speaker': 'emperor', 'text': '...', 'nextNode': 'end'}"
+        "你要根据玩家的对话，分析其意图和礼仪，然后决定你对玩家的好感度变化。"
+        "请以JSON格式返回，包含'speaker', 'text', 'nextNode'和'favorabilityChange'。"
+        "favorabilityChange是一个整数，可以是-1（好感度下降），0（不变），或1（好感度上升）。"
+        "例如：{'speaker': 'emperor', 'text': '...', 'nextNode': 'end', 'favorabilityChange': 1}"
     ),
 }
 
@@ -103,9 +104,12 @@ def generate_dialogue(character: str, conversation_history: list):
         try:
             if response_text.strip().startswith("```json"):
                 response_text = response_text.strip()[7:-3].strip()
-            return json.loads(response_text)
+            data = json.loads(response_text)
+            if 'favorabilityChange' not in data:
+                data['favorabilityChange'] = 0
+            return data
         except json.JSONDecodeError:
-            return {"speaker": character, "text": response_text, "nextNode": "end"}
+            return {"speaker": character, "text": response_text, "nextNode": "end", "favorabilityChange": 0}
 
     except Exception as e:
         import traceback
