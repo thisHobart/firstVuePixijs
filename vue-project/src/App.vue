@@ -1,5 +1,16 @@
 <template>
   <div class="pixi_app_container">
+    <!-- Favorability display moved to top left -->
+    <div class="favorability-status-container">
+      <h3>角色好感度</h3>
+      <ul>
+        <li v-for="(status, id) in characterStates" :key="id">
+          <span>{{ getCharacterName(id) }}: </span>
+          <span>{{ status.favorability }}</span>
+        </li>
+      </ul>
+    </div>
+
     <h1>古代互动小说：宫廷风云</h1>
     <h2>场景：金銮殿</h2>
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
@@ -7,9 +18,7 @@
     <div v-if="activeConversation" class="dialogue-box">
       <p class="speaker-name">
         {{ currentSpeakerName }}
-        <span v-if="currentFavorability !== null" class="favorability-display">
-          好感度: {{ currentFavorability }}
-        </span>
+        <!-- Old favorability display removed from here -->
       </p>
       <p class="dialogue-text" @click="handleDialogueClick">{{ currentDialogueText }}</p>
 
@@ -47,11 +56,10 @@ const currentSpeakerName = computed(() => {
   return characterPresets.find(c => c.id === speakerId)?.name || '';
 });
 
-const currentFavorability = computed(() => {
-  const speakerId = currentDialogueNode.value?.speaker;
-  if (!speakerId || speakerId === 'player' || speakerId === 'system') return null;
-  return characterStates.value[speakerId]?.favorability;
-});
+const getCharacterName = (id) => {
+  const character = characterPresets.find(c => c.id === id);
+  return character ? character.name : '';
+};
 
 const currentDialogueText = computed(() => {
   return currentDialogueNode.value?.text || '';
@@ -224,12 +232,6 @@ onMounted(() => {
   margin: 0 0 10px 0;
 }
 
-.favorability-display {
-  margin-left: 20px;
-  color: #89dd7c;
-  font-style: italic;
-}
-
 .dialogue-text {
   margin: 0 0 15px 0;
   cursor: pointer;
@@ -264,5 +266,39 @@ onMounted(() => {
 
 .input-container button:hover {
   background-color: #6a6a6a;
+}
+
+.favorability-status-container {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  padding: 10px 15px;
+  border-radius: 8px;
+  border: 1px solid #fff;
+  text-align: left;
+  z-index: 10; /* Ensure it's on top of other elements */
+}
+
+.favorability-status-container h3 {
+  margin: 0 0 10px 0;
+  color: #f0c54f;
+  font-size: 16px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #555;
+  text-align: center;
+}
+
+.favorability-status-container ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.favorability-status-container li {
+  font-size: 14px;
+  margin-bottom: 5px;
+  white-space: nowrap;
 }
 </style>
