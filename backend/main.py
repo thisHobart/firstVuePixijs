@@ -29,7 +29,7 @@ class DialogueRequest(BaseModel):
     history: List[Message] = Field(..., min_items=1)
 
 
-@app.post("/api/dialogue")
+@app.post("/api/dialogue", response_model=List[Dict[str, Any]])
 async def dialogue(request: DialogueRequest):
     print(f"Received request for character: {request.character}")
     print(f"Conversation history: {request.history}")

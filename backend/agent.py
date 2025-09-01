@@ -92,24 +92,39 @@ def generate_dialogue(character: str, conversation_history: list):
 
         # 使用 a_initiate_chat 而不是 initiate_chat 以支持异步
         # 这里我们仍然在同步函数中调用，但在Web服务中会用线程池处理
-        user_proxy.initiate_chat(
+        chat_result = user_proxy.initiate_chat(
             assistant,
             message=last_message,
             # chat_history=conversation_history[:-1] # 如果需要传递完整历史
         )
 
-        last = assistant.last_message()
-        response_text = last.get("content", "") if isinstance(last, dict) else str(last)
+        # -- 新逻辑：获取并返回所有助手的回复 --
+        responses = []
+        if chat_result.chat_history:
+            # 遍历历史记录，只处理来自助手（assistant）的消息
+            for msg in chat_result.chat_history:
+                # autogen中，助手的角色是 'assistant'
+                if msg.get("role") == "assistant":
+                    response_text = msg.get("content", "")
+                    try:
+                        # 清理可能的代码块标记
+                        if response_text.strip().startswith("```json"):
+                            response_text = response_text.strip()[7:-3].strip()
+                        data = json.loads(response_text)
+                        # 确保关键字段存在
+                        if 'favorabilityChange' not in data:
+                            data['favorabilityChange'] = 0
+                        responses.append(data)
+                    except json.JSONDecodeError:
+                        # 如果JSON解析失败，作为普通文本处理
+                        responses.append({
+                            "speaker": character,
+                            "text": response_text,
+                            "nextNode": "end",
+                            "favorabilityChange": 0
+                        })
 
-        try:
-            if response_text.strip().startswith("```json"):
-                response_text = response_text.strip()[7:-3].strip()
-            data = json.loads(response_text)
-            if 'favorabilityChange' not in data:
-                data['favorabilityChange'] = 0
-            return data
-        except json.JSONDecodeError:
-            return {"speaker": character, "text": response_text, "nextNode": "end", "favorabilityChange": 0}
+        return responses
 
     except Exception as e:
         import traceback
