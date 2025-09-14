@@ -1,22 +1,44 @@
 <template>
   <div class="pixi_app_container">
+    <!-- Favorability display moved to top left -->
+    <div class="favorability-status-container">
+      <h3>角色好感度</h3>
+      <ul>
+        <li v-for="(status, id) in characterStates" :key="id">
+          <span>{{ getCharacterName(id) }}: </span>
+          <span>{{ status.favorability }}</span>
+        </li>
+      </ul>
+    </div>
+
     <h1>古代互动小说：宫廷风云</h1>
     <h2>场景：金銮殿</h2>
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
 
-    <div v-if="activeConversation" class="dialogue-box">
-      <p class="speaker-name">
-        {{ currentSpeakerName }}
-        <span v-if="currentFavorability !== null" class="favorability-display">
-          好感度: {{ currentFavorability }}
-        </span>
-      </p>
-      <p class="dialogue-text" @click="handleDialogueClick">{{ currentDialogueText }}</p>
+    <!-- Dialogue History Log -->
+    <div v-if="showHistory" class="history-log-overlay" @click="toggleHistory">
+      <div class="history-log-box" @click.stop>
+        <h3>对话历史</h3>
+        <div class="history-log-content">
+          <div v-for="(message, index) in conversationHistory" :key="index" class="message">
+            <p class="speaker-name">{{ getSpeakerName(message.role) }}:</p>
+            <p class="dialogue-text">{{ message.content }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
 
-      <!-- Choices replaced by input field -->
+    <div v-if="activeConversation" class="dialogue-box">
+      <!-- Display the last message -->
+      <div class="last-message" v-if="lastMessage">
+        <p class="speaker-name">{{ getSpeakerName(lastMessage.role) }}</p>
+        <p class="dialogue-text">{{ lastMessage.content }}</p>
+      </div>
+
       <div class="input-container">
         <input v-model="playerInput" @keyup.enter="sendPlayerInput" placeholder="你说……" />
         <button @click="sendPlayerInput">发送</button>
+        <button @click="toggleHistory" class="history-button">历史</button>
       </div>
     </div>
     <div v-else class="dialogue-box-placeholder">
@@ -27,7 +49,7 @@
 
 <script setup>
 import * as PIXI from 'pixi.js';
-import { onMounted, ref, computed } from 'vue';
+import { onMounted, ref, computed, nextTick, watch } from 'vue';
 import { characterPresets } from './assets/characterPresets';
 
 const pixiCanvasContainer = ref(null);
@@ -36,74 +58,75 @@ const characterStates = ref({});
 
 // Dialogue state
 const activeConversation = ref(null);
-const currentDialogueNode = ref(null);
 const playerInput = ref('');
-// New ref for managing the complete conversation history
 const conversationHistory = ref([]);
+const showHistory = ref(false);
 
-const currentSpeakerName = computed(() => {
-  const speakerId = currentDialogueNode.value?.speaker;
-  if (speakerId === 'system') return '系统提示';
-  return characterPresets.find(c => c.id === speakerId)?.name || '';
+const getCharacterName = (id) => {
+  const character = characterPresets.find(c => c.id === id);
+  return character ? character.name : '';
+};
+
+const getSpeakerName = (role) => {
+  if (role === 'system') return '系统提示';
+  const character = characterPresets.find(c => c.id === role);
+  return character ? character.name : '你'; // Default to '你' for player
+};
+
+const lastMessage = computed(() => {
+  return conversationHistory.value[conversationHistory.value.length - 1];
 });
 
-const currentFavorability = computed(() => {
-  const speakerId = currentDialogueNode.value?.speaker;
-  if (!speakerId || speakerId === 'player' || speakerId === 'system') return null;
-  return characterStates.value[speakerId]?.favorability;
-});
-
-const currentDialogueText = computed(() => {
-  return currentDialogueNode.value?.text || '';
-});
+const toggleHistory = () => {
+  showHistory.value = !showHistory.value;
+};
 
 const fetchDialogueNode = async (character) => {
-  // The 'node' parameter is replaced by using the conversationHistory
   if (conversationHistory.value.length === 0) return;
 
   console.log("正在发送到后端的历史记录:", JSON.stringify(conversationHistory.value, null, 2));
   try {
+    // Construct history for backend, ensuring roles are 'user' or 'assistant'
+    const backendHistory = conversationHistory.value.map(msg => ({
+      role: msg.role === 'player' ? 'user' : 'assistant',
+      content: msg.content
+    }));
+
     const response = await fetch('http://127.0.0.1:8000/api/dialogue', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      // Correctly formatted body
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         character: character,
-        history: conversationHistory.value
+        history: backendHistory
       }),
     });
-    if (!response.ok) {
-      throw new Error(`网络响应错误: ${response.statusText}`);
-    }
-    const data = await response.json();
-    currentDialogueNode.value = data;
-    // Add AI response to history
-    conversationHistory.value.push({ role: data.speaker || 'assistant', content: data.text });
 
-    // Update favorability
-    if (data.favorabilityChange && characterStates.value[character]) {
-      characterStates.value[character].favorability += data.favorabilityChange;
-    }
+    if (!response.ok) throw new Error(`网络响应错误: ${response.statusText}`);
 
+    const data = await response.json(); // Expects an array of messages
+
+    for (const message of data) {
+      conversationHistory.value.push({
+        role: message.speaker || 'assistant',
+        content: message.text
+      });
+      if (message.favorabilityChange && characterStates.value[character]) {
+        characterStates.value[character].favorability += message.favorabilityChange;
+      }
+    }
   } catch (error) {
     console.error('Fetch操作出现问题:', error);
-    currentDialogueNode.value = {
-        speaker: 'system',
-        text: `无法连接到服务器: ${error.message}`,
-        nextNode: 'end'
-    };
-    // Do not end conversation, allow user to see the error
+    conversationHistory.value.push({
+      role: 'system',
+      content: `无法连接到服务器: ${error.message}`
+    });
   }
 };
 
 const startConversation = async (characterId) => {
   if (characterId === 'player' || activeConversation.value) return;
   activeConversation.value = characterId;
-  // Initialize history with a starting message for the AI to respond to
-  conversationHistory.value = [{ role: 'user', content: '你好' }];
-  currentDialogueNode.value = { speaker: 'player', text: '你好' };
+  conversationHistory.value = [{ role: 'player', content: '你好' }];
   await fetchDialogueNode(characterId);
 };
 
@@ -111,10 +134,7 @@ const sendPlayerInput = async () => {
   const trimmedInput = playerInput.value.trim();
   if (trimmedInput === '' || !activeConversation.value) return;
 
-  // Add user message to history
-  conversationHistory.value.push({ role: 'user', content: trimmedInput });
-  // Update UI immediately for better UX
-  currentDialogueNode.value = { speaker: 'player', text: trimmedInput };
+  conversationHistory.value.push({ role: 'player', content: trimmedInput });
 
   await fetchDialogueNode(activeConversation.value);
   playerInput.value = '';
@@ -122,19 +142,8 @@ const sendPlayerInput = async () => {
 
 const endConversation = () => {
   activeConversation.value = null;
-  currentDialogueNode.value = null;
-  conversationHistory.value = []; // Clear history
-}
-
-const handleDialogueClick = async () => {
-    // This function can be used for advancing dialogue if there are no choices/inputs needed
-    // For now, the main interaction is via the input field.
-    const nextNodeId = currentDialogueNode.value?.nextNode;
-    if (nextNodeId && !currentDialogueNode.value?.choices?.length) { // Only advance if no choices
-        await fetchDialogueNode(activeConversation.value, nextNodeId);
-    } else if (!nextNodeId && !currentDialogueNode.value?.choices?.length) {
-        // endConversation(); // Decide if clicking ends conversation
-    }
+  conversationHistory.value = [];
+  showHistory.value = false;
 }
 
 const initPixiApp = () => {
@@ -184,6 +193,7 @@ onMounted(() => {
 </script>
 
 <style>
+/* General App Layout */
 .pixi_app_container {
   position: relative;
   text-align: center;
@@ -196,13 +206,14 @@ onMounted(() => {
   display: inline-block;
 }
 
+/* Dialogue Box */
 .dialogue-box, .dialogue-box-placeholder {
   position: absolute;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  width: 800px; /* Wider for input */
-  min-height: 150px; /* Taller for input */
+  width: 800px;
+  min-height: 150px;
   background-color: rgba(0, 0, 0, 0.8);
   border: 2px solid #fff;
   border-radius: 10px;
@@ -210,35 +221,38 @@ onMounted(() => {
   padding: 15px 20px;
   box-sizing: border-box;
   font-size: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
+
 .dialogue-box-placeholder {
-    text-align: center;
-    padding-top: 20px;
-    font-style: italic;
-    color: #36d78c;
+  justify-content: center;
+  align-items: center;
+  font-style: italic;
+  color: #36d78c;
+}
+
+/* Last Message Display */
+.last-message {
+  margin-bottom: 15px;
 }
 
 .speaker-name {
   font-weight: bold;
   color: #f0c54f;
-  margin: 0 0 10px 0;
-}
-
-.favorability-display {
-  margin-left: 20px;
-  color: #89dd7c;
-  font-style: italic;
+  margin: 0 0 5px 0;
 }
 
 .dialogue-text {
-  margin: 0 0 15px 0;
-  cursor: pointer;
+  margin: 0;
+  white-space: pre-wrap; /* Allows text to wrap */
 }
 
+/* Input Controls */
 .input-container {
   display: flex;
   gap: 10px;
-  margin-top: 10px;
 }
 
 .input-container input {
@@ -264,5 +278,97 @@ onMounted(() => {
 
 .input-container button:hover {
   background-color: #6a6a6a;
+}
+
+.history-button {
+  background-color: #2c5b7c;
+}
+.history-button:hover {
+  background-color: #3a7aab;
+}
+
+/* Favorability Status */
+.favorability-status-container {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  padding: 10px 15px;
+  border-radius: 8px;
+  border: 1px solid #fff;
+  text-align: left;
+  z-index: 10;
+}
+
+.favorability-status-container h3 {
+  margin: 0 0 10px 0;
+  color: #f0c54f;
+  font-size: 16px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #555;
+  text-align: center;
+}
+
+.favorability-status-container ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.favorability-status-container li {
+  font-size: 14px;
+  margin-bottom: 5px;
+  white-space: nowrap;
+}
+
+/* History Log Overlay */
+.history-log-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+}
+
+.history-log-box {
+  width: 60%;
+  max-width: 700px;
+  height: 70%;
+  background-color: #1a1a1a;
+  border: 2px solid #f0c54f;
+  border-radius: 15px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  color: #fff;
+}
+
+.history-log-box h3 {
+  text-align: center;
+  margin-top: 0;
+  color: #f0c54f;
+  border-bottom: 1px solid #555;
+  padding-bottom: 10px;
+}
+
+.history-log-content {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding-right: 10px; /* For scrollbar spacing */
+}
+
+.history-log-content .message {
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px dotted #444;
+}
+.history-log-content .message:last-child {
+  border-bottom: none;
 }
 </style>
