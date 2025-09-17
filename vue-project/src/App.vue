@@ -84,13 +84,23 @@ const toggleHistory = () => {
 const fetchDialogueNode = async (character) => {
   if (conversationHistory.value.length === 0) return;
 
-  console.log("正在发送到后端的历史记录:", JSON.stringify(conversationHistory.value, null, 2));
+  console.log(
+    "正在发送到后端的历史记录:",
+    JSON.stringify(conversationHistory.value, null, 2)
+  );
   try {
     // Construct history for backend, ensuring roles are 'user' or 'assistant'
-    const backendHistory = conversationHistory.value.map(msg => ({
-      role: msg.role === 'player' ? 'user' : 'assistant',
-      content: msg.content
-    }));
+    const backendHistory = conversationHistory.value
+      .filter(msg => msg.role !== 'system')
+      .map(msg => ({
+        role: msg.role === 'player' ? 'user' : 'assistant',
+        content: msg.content
+      }));
+
+    console.log(
+      '转换后的后端历史记录:',
+      JSON.stringify(backendHistory, null, 2)
+    );
 
     const response = await fetch('/api/dialogue', {
       method: 'POST',
@@ -103,15 +113,76 @@ const fetchDialogueNode = async (character) => {
 
     if (!response.ok) throw new Error(`网络响应错误: ${response.statusText}`);
 
-    const data = await response.json(); // Expects an array of messages
+    const data = await response.json();
+    console.log('后端返回的原始数据:', data);
 
-    for (const message of data) {
+    const messages = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.messages)
+        ? data.messages
+        : [];
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      console.warn('后端响应为空或格式不符合预期:', data);
       conversationHistory.value.push({
-        role: message.speaker || 'assistant',
-        content: message.text
+        role: 'system',
+        content: '未收到来自后端的有效回复，请稍后再试。'
       });
-      if (message.favorabilityChange && characterStates.value[character]) {
-        characterStates.value[character].favorability += message.favorabilityChange;
+      return;
+    }
+
+    const normalizedMessages = messages
+      .map((message) => {
+        if (!message) return null;
+
+        const rawContent =
+          typeof message === 'string'
+            ? message
+            : message.text || message.content || '';
+        if (!rawContent) {
+          console.warn('忽略内容为空的后端消息:', message);
+          return null;
+        }
+
+        const backendRole =
+          (typeof message === 'object' && (message.role || message.speaker))
+            || 'assistant';
+        const resolvedRole =
+          backendRole === 'assistant' && character
+            ? character
+            : backendRole;
+
+        const favorabilityDelta =
+          typeof message?.favorabilityChange === 'number'
+            ? message.favorabilityChange
+            : 0;
+
+        return {
+          role: resolvedRole,
+          content: rawContent,
+          favorabilityChange: favorabilityDelta,
+        };
+      })
+      .filter(Boolean);
+
+    if (normalizedMessages.length === 0) {
+      console.warn('后端响应未包含可用的消息内容:', data);
+      conversationHistory.value.push({
+        role: 'system',
+        content: '后端返回的对话内容为空。'
+      });
+      return;
+    }
+
+    for (const message of normalizedMessages) {
+      conversationHistory.value.push({
+        role: message.role,
+        content: message.content
+      });
+
+      const favorabilityTarget = characterStates.value[character];
+      if (favorabilityTarget && message.favorabilityChange !== 0) {
+        favorabilityTarget.favorability += message.favorabilityChange;
       }
     }
   } catch (error) {
