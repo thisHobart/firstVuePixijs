@@ -1,8 +1,9 @@
 from dotenv import load_dotenv
 import os
 import json
+import re
 from autogen import AssistantAgent, UserProxyAgent
-from typing import Dict
+from typing import Dict, Any, List
 
 load_dotenv()
 
@@ -52,7 +53,7 @@ class AgentManager:
         self._user_proxy_agent = UserProxyAgent(
             name="user_proxy",
             human_input_mode="NEVER",
-            max_consecutive_auto_reply=1,
+            max_consecutive_auto_reply=0,
             is_termination_msg=lambda x: x.get("content", "").rstrip().endswith("TERMINATE"),
             code_execution_config=False,
         )
@@ -78,7 +79,44 @@ agent_manager = AgentManager()
 
 
 # --- 修改 generate_dialogue 函数以使用 Manager ---
-def generate_dialogue(character: str, conversation_history: list):
+def _extract_json_from_text(text: str) -> Any:
+    """Try to robustly parse a JSON object from LLM text.
+
+    Supports raw JSON, fenced ```json blocks, or best-effort curly block extraction.
+    Returns parsed JSON on success, otherwise raises json.JSONDecodeError.
+    """
+    s = text.strip()
+
+    # 1) Direct JSON
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # 2) Fenced code block ```json ... ``` or ``` ... ```
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", s, flags=re.IGNORECASE)
+    if fence_match:
+        block = fence_match.group(1).strip()
+        return json.loads(block)
+
+    # 3) Best-effort: find first {...} balanced block
+    start = s.find("{")
+    if start != -1:
+        depth = 0
+        for i in range(start, len(s)):
+            if s[i] == '{':
+                depth += 1
+            elif s[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    candidate = s[start:i+1]
+                    return json.loads(candidate)
+
+    # If all strategies fail, raise
+    raise json.JSONDecodeError("Unable to parse JSON from text", s, 0)
+
+
+def generate_dialogue(character: str, conversation_history: list) -> List[Dict[str, Any]]:
     try:
         # 从 manager 获取缓存的 agent 实例
         assistant = agent_manager.get_assistant(character)
@@ -90,47 +128,108 @@ def generate_dialogue(character: str, conversation_history: list):
 
         last_message = conversation_history[-1]["content"]
 
-        # 使用 a_initiate_chat 而不是 initiate_chat 以支持异步
-        # 这里我们仍然在同步函数中调用，但在Web服务中会用线程池处理
+        # 使用 initiate_chat，这里在Web服务中会用线程池处理
         chat_result = user_proxy.initiate_chat(
             assistant,
             message=last_message,
-            # chat_history=conversation_history[:-1] # 如果需要传递完整历史
+            # 传递除最后一句以外的历史辅助模型理解上下文（可选开启）
+            # chat_history=conversation_history[:-1]
         )
 
-        # -- 新逻辑：获取并返回所有助手的回复 --
-        responses = []
+        # -- 新逻辑：优先从所有消息中提取符合JSON规范的助手回复 --
+        def _stringify_content(val: Any) -> str:
+            if isinstance(val, str):
+                return val
+            if isinstance(val, list):
+                parts = []
+                for item in val:
+                    if isinstance(item, dict) and isinstance(item.get('text'), str):
+                        parts.append(item['text'])
+                    else:
+                        parts.append(str(item))
+                return "\n".join(parts)
+            if isinstance(val, dict):
+                if isinstance(val.get('text'), str):
+                    return val['text']
+                try:
+                    return json.dumps(val, ensure_ascii=False)
+                except Exception:
+                    return str(val)
+            return str(val)
+
+        parsed_json_responses: List[Dict[str, Any]] = []
+        plain_fallback_responses: List[str] = []
+
         if chat_result.chat_history:
-            # 遍历历史记录，只处理来自助手（assistant）的消息
             for msg in chat_result.chat_history:
-                # autogen中，助手的角色是 'assistant'
-                if msg.get("role") == "assistant":
-                    response_text = msg.get("content", "")
-                    try:
-                        # 清理可能的代码块标记
-                        if response_text.strip().startswith("```json"):
-                            response_text = response_text.strip()[7:-3].strip()
-                        data = json.loads(response_text)
-                        # 确保关键字段存在
-                        if 'favorabilityChange' not in data:
-                            data['favorabilityChange'] = 0
-                        responses.append(data)
-                    except json.JSONDecodeError:
-                        # 如果JSON解析失败，作为普通文本处理
-                        responses.append({
-                            "speaker": character,
-                            "text": response_text,
-                            "nextNode": "end",
-                            "favorabilityChange": 0
-                        })
+                role = msg.get("role") or ""
+                name = msg.get("name") or msg.get("sender") or ""
+                content_raw = msg.get("content", "")
+                response_text = _stringify_content(content_raw)
+
+                # 仅考虑疑似来自助手/角色本人的消息
+                if not (role == "assistant" or role == character or name == character):
+                    continue
+
+                # 优先尝试解析严格的 JSON 回复
+                try:
+                    data = _extract_json_from_text(response_text)
+                    items: List[Dict[str, Any]] = []
+                    if isinstance(data, dict):
+                        items = [data]
+                    elif isinstance(data, list):
+                        items = [d for d in data if isinstance(d, dict)]
+
+                    for item in items:
+                        item.setdefault('speaker', character)
+                        item.setdefault('text', '')
+                        item.setdefault('nextNode', 'end')
+                        item.setdefault('favorabilityChange', 0)
+                        # 丢弃没有文本的项
+                        if item['text']:
+                            parsed_json_responses.append(item)
+                    # 成功解析则不再把该条作为纯文本fallback
+                    continue
+                except json.JSONDecodeError:
+                    pass
+
+                # 记录纯文本以便兜底（避免把用户输入回显）
+                if response_text and response_text.strip():
+                    plain_fallback_responses.append(response_text.strip())
+
+        responses: List[Dict[str, Any]] = []
+        if parsed_json_responses:
+            responses = parsed_json_responses
+        else:
+            # 尝试使用最后一条非空文本作为兜底，但避免回显用户的最后一句
+            last_user_msg = conversation_history[-1]["content"] if conversation_history else ""
+            for text in plain_fallback_responses:
+                if text == last_user_msg:
+                    continue
+                responses.append({
+                    "speaker": character,
+                    "text": text,
+                    "nextNode": "end",
+                    "favorabilityChange": 0
+                })
+
+        # 调试日志：便于与前端核对实际返回
+        try:
+            print("Agent responses:", json.dumps(responses, ensure_ascii=False))
+        except Exception:
+            pass
 
         return responses
 
     except Exception as e:
         import traceback
         print(traceback.format_exc())  # 打印详细错误以供调试
-        return {
-            "speaker": "system",
-            "text": f"抱歉，调用AI时出现错误: {e}",
-            "nextNode": "end"
-        }
+        # 始终返回列表，保持API响应一致
+        return [
+            {
+                "speaker": "system",
+                "text": f"抱歉，调用AI时出现错误: {e}",
+                "nextNode": "end",
+                "favorabilityChange": 0,
+            }
+        ]
