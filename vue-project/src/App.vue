@@ -113,8 +113,12 @@ const fetchDialogueNode = async (character) => {
 
     if (!response.ok) throw new Error(`网络响应错误: ${response.statusText}`);
 
+    const cloned = response.clone();
     const data = await response.json();
     console.log('后端返回的原始数据:', data);
+    try {
+      console.log('后端返回的原始文本:', await cloned.text());
+    } catch (_) {}
 
     const messages = Array.isArray(data)
       ? data
@@ -135,10 +139,17 @@ const fetchDialogueNode = async (character) => {
       .map((message) => {
         if (!message) return null;
 
-        const rawContent =
-          typeof message === 'string'
-            ? message
-            : message.text || message.content || '';
+        // 优先使用后端规范中的 text 字段，避免误用请求里 content 字段
+        let rawContent = '';
+        if (typeof message === 'string') {
+          rawContent = message;
+        } else if (typeof message === 'object') {
+          if (typeof message.text === 'string') {
+            rawContent = message.text;
+          } else if (typeof message.content === 'string') {
+            rawContent = message.content;
+          }
+        }
         if (!rawContent) {
           console.warn('忽略内容为空的后端消息:', message);
           return null;

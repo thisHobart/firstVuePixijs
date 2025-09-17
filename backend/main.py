@@ -43,6 +43,12 @@ async def dialogue(request: DialogueRequest):
         request.character,
         conversation_history_dict
     )
+    try:
+        # 调试用：直观展示将要返回给前端的数据
+        import json as _json
+        print("Response to frontend:", _json.dumps(response, ensure_ascii=False))
+    except Exception:
+        pass
 
     return response
 
