@@ -2,10 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
-from fastapi.concurrency import run_in_threadpool  # 导入线程池工具
-
+from fastapi import HTTPException
 from agent import generate_dialogue
-
+import json as _json
 app = FastAPI()
 
 app.add_middleware(
@@ -34,23 +33,25 @@ async def dialogue(request: DialogueRequest):
     print(f"Received request for character: {request.character}")
     print(f"Conversation history: {request.history}")
 
-    # 将 Pydantic 模型转换为 agent 函数需要的字典列表
+    # Pydantic -> dict
     conversation_history_dict = [msg.model_dump() for msg in request.history]
 
-    # --- 使用线程池异步执行耗时的AI调用，防止阻塞 ---
-    response = await run_in_threadpool(
-        generate_dialogue,
-        request.character,
-        conversation_history_dict
-    )
     try:
-        # 调试用：直观展示将要返回给前端的数据
-        import json as _json
-        print("Response to frontend:", _json.dumps(response, ensure_ascii=False))
-    except Exception:
-        pass
+        # ✅ 直接 await 异步的 generate_dialogue
+        response = await generate_dialogue(request.character, conversation_history_dict)
 
-    return response
+        # 调试输出
+        try:
+            print("Response to frontend:", _json.dumps(response, ensure_ascii=False))
+        except Exception:
+            pass
+
+        return response
+
+    except Exception as e:
+        # 统一兜底（你 generate_dialogue 内部已有 try/except，这里二次保险）
+        print("dialogue error:", repr(e))
+        raise HTTPException(status_code=500, detail=f"dialogue failed: {e}")
 
 
 if __name__ == "__main__":
