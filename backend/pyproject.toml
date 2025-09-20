@@ -1,15 +1,12 @@
-[tool.poetry]
+﻿[tool.poetry]
 name = "game-backend"
 version = "0.1.0"
 description = "Backend for the interactive game."
 authors = ["Jules"]
 
 [tool.poetry.dependencies]
-python = "^3.9"
-fastapi = "*"
-uvicorn = {extras = ["standard"], version = "*"}
-python-dotenv = "*"
-pyautogen = "*"
+python = "^3.10"
+# Runtime dependencies listed in requirements.txt
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
