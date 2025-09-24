@@ -1,5 +1,10 @@
 <template>
   <div class="pixi_app_container">
+    <div v-if="isAuthenticated" class="auth-status-bar">
+      <span>当前用户：{{ currentUser }}</span>
+      <button type="button" @click="logout">退出登录</button>
+    </div>
+
     <!-- Favorability display moved to top left -->
     <div class="favorability-status-container">
       <h3>角色好感度</h3>
@@ -44,6 +49,44 @@
     <div v-else class="dialogue-box-placeholder">
       <p>点击NPC开始对话</p>
     </div>
+
+    <div v-if="!isAuthenticated" class="auth-overlay">
+      <div class="auth-card">
+        <h2>{{ authTitle }}</h2>
+        <form class="auth-form" @submit.prevent="submitAuth">
+          <label>
+            用户名
+            <input
+              v-model.trim="authForm.username"
+              type="text"
+              placeholder="请输入用户名"
+              autocomplete="username"
+              :disabled="authLoading"
+            />
+          </label>
+          <label>
+            密码
+            <input
+              v-model="authForm.password"
+              type="password"
+              placeholder="请输入密码"
+              autocomplete="current-password"
+              :disabled="authLoading"
+            />
+          </label>
+          <p v-if="authError" class="auth-error">{{ authError }}</p>
+          <button type="submit" :disabled="authLoading">
+            {{ authLoading ? '提交中...' : authTitle }}
+          </button>
+        </form>
+        <p class="auth-toggle">
+          <span>{{ authMode === 'login' ? '还没有账号？' : '已经有账号了？' }}</span>
+          <button type="button" @click="toggleAuthMode">
+            {{ authMode === 'login' ? '去注册' : '去登录' }}
+          </button>
+        </p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -62,6 +105,16 @@ const playerInput = ref('');
 const conversationHistory = ref([]);
 const showHistory = ref(false);
 
+// Authentication state
+const currentUser = ref(null);
+const authMode = ref('login');
+const authForm = ref({ username: '', password: '' });
+const authError = ref('');
+const authLoading = ref(false);
+
+const isAuthenticated = computed(() => Boolean(currentUser.value));
+const authTitle = computed(() => (authMode.value === 'login' ? '登录' : '注册'));
+
 const getCharacterName = (id) => {
   const character = characterPresets.find(c => c.id === id);
   return character ? character.name : '';
@@ -70,7 +123,7 @@ const getCharacterName = (id) => {
 const getSpeakerName = (role) => {
   if (role === 'system') return '系统提示';
   const character = characterPresets.find(c => c.id === role);
-  return character ? character.name : '你'; // Default to '你' for player
+  return character ? character.name : '玩家'; // 玩家身份标识
 };
 
 const lastMessage = computed(() => {
@@ -81,7 +134,69 @@ const toggleHistory = () => {
   showHistory.value = !showHistory.value;
 };
 
+const toggleAuthMode = () => {
+  authMode.value = authMode.value === 'login' ? 'register' : 'login';
+  authError.value = '';
+  authForm.value.password = '';
+};
+
+const resetConversationState = () => {
+  activeConversation.value = null;
+  conversationHistory.value = [];
+  playerInput.value = '';
+  showHistory.value = false;
+};
+
+const submitAuth = async () => {
+  if (authLoading.value) return;
+  authError.value = '';
+  const username = authForm.value.username.trim();
+  authForm.value.username = username;
+  const password = authForm.value.password;
+  if (!username || !password) {
+    authError.value = '请输入用户名和密码';
+    return;
+  }
+  authLoading.value = true;
+  try {
+    const response = await fetch(`/api/auth/${authMode.value}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (_) {
+      payload = null;
+    }
+    if (!response.ok) {
+      authError.value =
+        (payload && (payload.detail || payload.message)) || '请求失败，请稍后重试';
+      return;
+    }
+    currentUser.value = (payload && payload.username) || username;
+    authForm.value.password = '';
+    resetConversationState();
+  } catch (error) {
+    console.error('auth request failed', error);
+    authError.value = '无法连接服务器，请稍后重试';
+  } finally {
+    authLoading.value = false;
+  }
+};
+
+const logout = () => {
+  currentUser.value = null;
+  authMode.value = 'login';
+  authError.value = '';
+  authForm.value.username = '';
+  authForm.value.password = '';
+  resetConversationState();
+};
+
 const fetchDialogueNode = async (character) => {
+  if (!isAuthenticated.value) return;
   if (conversationHistory.value.length === 0) return;
 
   console.log(
@@ -206,6 +321,7 @@ const fetchDialogueNode = async (character) => {
 };
 
 const startConversation = async (characterId) => {
+  if (!isAuthenticated.value) return;
   if (characterId === 'player' || activeConversation.value) return;
   activeConversation.value = characterId;
   conversationHistory.value = [{ role: 'player', content: '你好' }];
@@ -213,6 +329,7 @@ const startConversation = async (characterId) => {
 };
 
 const sendPlayerInput = async () => {
+  if (!isAuthenticated.value) return;
   const trimmedInput = playerInput.value.trim();
   if (trimmedInput === '' || !activeConversation.value) return;
 
@@ -223,10 +340,19 @@ const sendPlayerInput = async () => {
 };
 
 const endConversation = () => {
-  activeConversation.value = null;
-  conversationHistory.value = [];
-  showHistory.value = false;
+  resetConversationState();
 }
+
+watch(currentUser, (value) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) {
+      window.localStorage.setItem("authUsername", value);
+    } else {
+      window.localStorage.removeItem("authUsername");
+    }
+  } catch (_) {}
+});
 
 const initPixiApp = () => {
   const container = pixiCanvasContainer.value;
@@ -260,6 +386,15 @@ const setupScene = () => {
 }
 
 onMounted(() => {
+  if (typeof window !== "undefined") {
+    try {
+      const savedUser = window.localStorage.getItem("authUsername");
+      if (savedUser) {
+        currentUser.value = savedUser;
+      }
+    } catch (_) {}
+  }
+
   // Initialize character states from presets
   characterPresets.forEach(preset => {
     if (preset.id !== 'player') {
@@ -452,5 +587,117 @@ onMounted(() => {
 }
 .history-log-content .message:last-child {
   border-bottom: none;
+}
+
+/* Authentication */
+.auth-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 200;
+}
+
+.auth-card {
+  width: 320px;
+  padding: 24px;
+  background: #1f1f1f;
+  border-radius: 12px;
+  border: 1px solid #444;
+  color: #fff;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.auth-card h2 {
+  margin: 0 0 16px 0;
+  text-align: center;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.auth-form input {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #555;
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.auth-form button {
+  margin-top: 8px;
+  padding: 10px;
+  background-color: #2c5b7c;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.auth-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.auth-error {
+  margin: 0;
+  color: #ff6b6b;
+  font-size: 13px;
+}
+
+.auth-toggle {
+  margin-top: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.auth-toggle button {
+  background: none;
+  border: none;
+  color: #f0c54f;
+  cursor: pointer;
+  padding: 0;
+}
+
+.auth-status-bar {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #fff;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  z-index: 20;
+}
+
+.auth-status-bar button {
+  background: transparent;
+  border: 1px solid #fff;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.auth-status-bar button:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
 </style>
