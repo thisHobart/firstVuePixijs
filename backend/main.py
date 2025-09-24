@@ -1,65 +1,110 @@
-from fastapi import FastAPI
+"""FastAPI application exposing dialogue and authentication APIs."""
+from __future__ import annotations
+
+import json as _json
+from typing import Any, Dict, List
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
-from fastapi import HTTPException
+
 from agent import generate_dialogue
-import json as _json
-app = FastAPI()
+from auth.models import AuthResponse, Credentials, ProfileResponse
+from auth.service import (
+    DuplicateUsernameError,
+    authenticate_user,
+    load_profile,
+    register_user,
+)
+
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+app = FastAPI(title="Interactive Fiction Service")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# --- 重新设计 API 请求体，使其更具扩展性 ---
 class Message(BaseModel):
+    """单条对话消息."""
+
     role: str
     content: str
 
 
 class DialogueRequest(BaseModel):
+    """前端发送的对话请求，包含角色和完整历史."""
+
     character: str
-    # 接收完整的对话历史
-    history: List[Message] = Field(..., min_items=1)
+    history: List[Message] = Field(..., min_items=1, description="完整的对话历史")
 
 
 @app.post("/api/dialogue", response_model=List[Dict[str, Any]])
 async def dialogue(request: DialogueRequest):
+    """根据已有对话历史生成下一轮剧情."""
+
     print(f"Received request for character: {request.character}")
     print(f"Conversation history: {request.history}")
 
-    # Pydantic -> dict
     conversation_history_dict = [msg.model_dump() for msg in request.history]
 
     try:
-        # ✅ 直接 await 异步的 generate_dialogue
         response = await generate_dialogue(request.character, conversation_history_dict)
+    except Exception as exc:  # 捕获生成对话的异常，返回统一错误
+        print("dialogue error:", repr(exc))
+        raise HTTPException(status_code=500, detail=f"dialogue failed: {exc}") from exc
 
-        # 调试输出
-        try:
-            print("Response to frontend:", _json.dumps(response, ensure_ascii=False))
-        except Exception:
-            pass
+    try:
+        print("Response to frontend:", _json.dumps(response, ensure_ascii=False))
+    except Exception:
+        pass
 
-        return response
+    return response
 
-    except Exception as e:
-        # 统一兜底（你 generate_dialogue 内部已有 try/except，这里二次保险）
-        print("dialogue error:", repr(e))
-        raise HTTPException(status_code=500, detail=f"dialogue failed: {e}")
+
+@app.post("/api/auth/register", response_model=AuthResponse)
+async def register(credentials: Credentials) -> AuthResponse:
+    """注册新用户."""
+
+    try:
+        result = await register_user(credentials.username, credentials.password)
+    except DuplicateUsernameError as exc:
+        raise HTTPException(status_code=409, detail="用户名已存在") from exc
+
+    return AuthResponse(message="注册成功", username=result.username)
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def login(credentials: Credentials) -> AuthResponse:
+    """校验用户名密码并返回登录结果."""
+
+    result = await authenticate_user(credentials.username, credentials.password)
+    if not result:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+
+    return AuthResponse(message="登录成功", username=result.username)
+
+
+@app.get("/api/auth/profile", response_model=ProfileResponse)
+async def profile(username: str) -> ProfileResponse:
+    """查询用户档案信息."""
+
+    result = await load_profile(username)
+    if not result:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    return ProfileResponse(username=result.username, created_at=result.created_at)
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=True
-    )
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
