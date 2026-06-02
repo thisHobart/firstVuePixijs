@@ -207,12 +207,16 @@ def _extract_json_from_text(text: str) -> Any:
     # If all strategies fail, raise
     raise json.JSONDecodeError("Unable to parse JSON from text", s, 0)
 
-def _build_agent_task(user_text: str, story_context: Dict[str, Any] | None) -> str:
+def _build_agent_task(trigger_text: str, story_context: Dict[str, Any] | None) -> str:
     if not story_context:
-        return user_text
+        return trigger_text
 
     current_node = story_context.get("currentNodeId", "")
     node_title = story_context.get("title", "")
+    target_character = story_context.get("targetCharacter", "")
+    speaking_order = story_context.get("speakingOrder") or []
+    scene_memory = story_context.get("sceneMemory") or {}
+    npc_memory = story_context.get("npcMemory") or {}
     available_next_nodes = story_context.get("availableNextNodes") or []
     if not isinstance(available_next_nodes, list):
         available_next_nodes = []
@@ -221,11 +225,19 @@ def _build_agent_task(user_text: str, story_context: Dict[str, Any] | None) -> s
         "当前剧情上下文：\n"
         f"- currentNode: {current_node}\n"
         f"- title: {node_title}\n"
+        f"- targetCharacter: {target_character}\n"
+        f"- speakingOrder: {json.dumps(speaking_order, ensure_ascii=False)}\n"
         f"- availableNextNodes: {json.dumps(available_next_nodes, ensure_ascii=False)}\n"
-        "规则：你可以根据玩家输入建议nextNode，但必须从availableNextNodes中选择。"
+        f"- sceneMemory: {json.dumps(scene_memory, ensure_ascii=False)}\n"
+        f"- npcMemory: {json.dumps(npc_memory, ensure_ascii=False)}\n"
+        "规则：你可以根据当前触发文本和剧情上下文建议nextNode，但必须从availableNextNodes中选择。"
         "如果当前对话不足以推动剧情，nextNode返回'end'。"
         "不要编造availableNextNodes以外的剧情节点。\n"
-        f"玩家输入：{user_text}"
+        "你必须参考sceneMemory.recentTurns，保持和前文说法一致，不能忘记自己或其他NPC刚才说过的话。"
+        "如果你发现本轮对话触发了与你角色相关的状态变化，可以在stateUpdates中建议更新。"
+        "角色可建议状态：minister只能建议ministerContradiction；maid只能建议maidHint；"
+        "eunuch只能建议eunuchWitness；emperor只能建议emperorTrust。\n"
+        f"当前触发文本：{trigger_text}"
     )
 
 
@@ -278,9 +290,15 @@ async def generate_dialogue(
                 item.setdefault("text", "")
                 item.setdefault("nextNode", "end")
                 item.setdefault("favorabilityChange", 0)
+                item.setdefault("stateUpdates", {})
+                item.setdefault("evidenceUpdates", [])
                 item["favorabilityChange"] = _normalize_favorability_change(
                     item.get("favorabilityChange")
                 )
+                if not isinstance(item["stateUpdates"], dict):
+                    item["stateUpdates"] = {}
+                if not isinstance(item["evidenceUpdates"], list):
+                    item["evidenceUpdates"] = []
                 if isinstance(item["text"], str):
                     responses.append(item)
 

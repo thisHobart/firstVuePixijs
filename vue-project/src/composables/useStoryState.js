@@ -8,6 +8,39 @@ export function useStoryState(getCharacterName, options = {}) {
     playerChoices: {},
     flags: {},
   });
+  const sceneMemory = ref({
+    summary: '玩家正在乾清宫内证明血书密信真伪，并试图在半个时辰内找出皇子党与边将勾结的证据。',
+    recentTurns: [],
+    evidence: ['blood_letter'],
+    flags: {
+      ministerContradiction: false,
+      maidHint: false,
+      eunuchWitness: false,
+      emperorTrust: false,
+    },
+  });
+  const npcMemory = ref({
+    emperor: {
+      stance: 'test_everyone',
+      notes: ['表面震怒，实则观察殿内众人的反应。'],
+      lastClaims: [],
+    },
+    minister: {
+      stance: 'protect_prince',
+      notes: ['表面维护国本，实则暗中袒护涉案皇子。'],
+      lastClaims: [],
+    },
+    maid: {
+      stance: 'protect_emperor',
+      notes: ['知道皇帝真正的心理底线，但不能直接明说。'],
+      lastClaims: [],
+    },
+    eunuch: {
+      stance: 'self_preservation',
+      notes: ['知道今夜乾清宫内外出入记录，但怕牵连自身。'],
+      lastClaims: [],
+    },
+  });
   const nodeDialogueVisible = ref(false);
   const storyNotice = ref('');
 
@@ -35,7 +68,7 @@ export function useStoryState(getCharacterName, options = {}) {
     if (node.type === 'player_input') return '请选择你的回应';
     return '按剧情提示继续';
   });
-  const storyContext = computed(() => {
+  const getStoryContext = (targetCharacter, speakingOrder = []) => {
     const node = currentNode.value;
     if (!node) return null;
     return {
@@ -48,8 +81,12 @@ export function useStoryState(getCharacterName, options = {}) {
       availableCharacters: node.availableCharacters || [],
       completedNodes: storyState.value.completedNodes,
       playerChoices: storyState.value.playerChoices,
+      targetCharacter,
+      speakingOrder,
+      sceneMemory: sceneMemory.value,
+      npcMemory: npcMemory.value,
     };
-  });
+  };
 
   const pushSystemMessage = (content) => {
     storyNotice.value = content;
@@ -79,12 +116,69 @@ export function useStoryState(getCharacterName, options = {}) {
     }
   };
 
+  const appendSceneTurn = (speaker, text) => {
+    if (!speaker || !text) return;
+    sceneMemory.value.recentTurns.push({ speaker, text });
+    sceneMemory.value.recentTurns = sceneMemory.value.recentTurns.slice(-12);
+  };
+
   const chooseStoryOption = (choice) => {
     const node = currentNode.value;
     if (!node || node.type !== 'player_input') return;
     storyState.value.playerChoices[node.nodeId] = choice.id;
+    appendSceneTurn('player', choice.text);
     options.onStoryChoice?.(choice);
     advanceStory(choice.nextNode);
+  };
+
+  const decideSpeakingOrder = (targetCharacter) => {
+    if (!isFreeInteraction.value) return [targetCharacter];
+    const flags = sceneMemory.value.flags;
+    if (targetCharacter === 'minister') {
+      return flags.eunuchWitness
+        ? ['minister', 'maid', 'emperor']
+        : ['minister'];
+    }
+    if (targetCharacter === 'maid') {
+      return ['maid', 'emperor'];
+    }
+    if (targetCharacter === 'eunuch') {
+      return ['eunuch', 'minister'];
+    }
+    if (targetCharacter === 'emperor') {
+      return ['emperor', 'minister'];
+    }
+    return [targetCharacter];
+  };
+
+  const applyAgentResult = (speaker, message) => {
+    appendSceneTurn(message.role || speaker, message.content);
+
+    const allowedFlagBySpeaker = {
+      minister: 'ministerContradiction',
+      maid: 'maidHint',
+      eunuch: 'eunuchWitness',
+      emperor: 'emperorTrust',
+    };
+    const allowedFlag = allowedFlagBySpeaker[speaker];
+    const stateUpdates = message.stateUpdates || {};
+    if (allowedFlag && typeof stateUpdates[allowedFlag] === 'boolean') {
+      sceneMemory.value.flags[allowedFlag] = stateUpdates[allowedFlag];
+    }
+
+    const evidenceUpdates = Array.isArray(message.evidenceUpdates)
+      ? message.evidenceUpdates
+      : [];
+    for (const evidence of evidenceUpdates) {
+      if (typeof evidence === 'string' && !sceneMemory.value.evidence.includes(evidence)) {
+        sceneMemory.value.evidence.push(evidence);
+      }
+    }
+
+    if (npcMemory.value[speaker]) {
+      npcMemory.value[speaker].lastClaims.push(message.content);
+      npcMemory.value[speaker].lastClaims = npcMemory.value[speaker].lastClaims.slice(-4);
+    }
   };
 
   const handleStoryCharacterClick = (characterId) => {
@@ -130,10 +224,12 @@ export function useStoryState(getCharacterName, options = {}) {
 
   return {
     storyState,
+    sceneMemory,
+    npcMemory,
     nodeDialogueVisible,
     storyNotice,
     currentNode,
-    storyContext,
+    getStoryContext,
     isFreeInteraction,
     storyPanelText,
     canContinueStory,
@@ -142,6 +238,9 @@ export function useStoryState(getCharacterName, options = {}) {
     advanceStory,
     continueStory,
     chooseStoryOption,
+    appendSceneTurn,
+    decideSpeakingOrder,
+    applyAgentResult,
     handleStoryCharacterClick,
     applySuggestedNextNode,
   };

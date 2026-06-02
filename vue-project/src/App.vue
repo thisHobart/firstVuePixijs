@@ -128,6 +128,7 @@ const characterSprites = ref({});
 const activeConversation = ref(null);
 const playerInput = ref('');
 const conversationHistory = ref([]);
+const displayedStoryNodeIds = ref(new Set());
 const showHistory = ref(false);
 
 // Authentication state
@@ -145,9 +146,8 @@ const getCharacterName = (id) => {
   return character ? character.name : '';
 };
 
-const clearDialogueState = () => {
+const clearActiveConversationState = () => {
   activeConversation.value = null;
-  conversationHistory.value = [];
   playerInput.value = '';
   showHistory.value = false;
 };
@@ -156,18 +156,21 @@ const {
   storyState,
   storyNotice,
   currentNode,
-  storyContext,
+  getStoryContext,
   storyPanelText,
   canContinueStory,
   dialoguePlaceholderText,
   continueStory,
   chooseStoryOption,
+  appendSceneTurn,
+  decideSpeakingOrder,
+  applyAgentResult,
   handleStoryCharacterClick,
   applySuggestedNextNode,
 } = useStoryState(getCharacterName, {
-  onStoryAdvanced: clearDialogueState,
+  onStoryAdvanced: clearActiveConversationState,
   onStoryChoice: (choice) => {
-    conversationHistory.value = [{ role: 'player', content: choice.text }];
+    conversationHistory.value.push({ role: 'player', content: choice.text });
   },
 });
 
@@ -192,7 +195,21 @@ const toggleAuthMode = () => {
 };
 
 const resetConversationState = () => {
-  clearDialogueState();
+  clearActiveConversationState();
+  conversationHistory.value = [];
+  displayedStoryNodeIds.value = new Set();
+};
+
+const appendStoryNodeToHistory = (node, options = {}) => {
+  if (!node?.nodeId || !node.text) return;
+  const includeClickNpc = Boolean(options.includeClickNpc);
+  if (node.type === 'click_npc' && !includeClickNpc) return;
+  if (displayedStoryNodeIds.value.has(node.nodeId)) return;
+
+  displayedStoryNodeIds.value.add(node.nodeId);
+  const role = node.speaker && node.speaker !== 'system' ? node.speaker : 'system';
+  conversationHistory.value.push({ role, content: node.text });
+  appendSceneTurn(role, node.text);
 };
 
 const submitAuth = async () => {
@@ -226,6 +243,7 @@ const submitAuth = async () => {
     currentUser.value = (payload && payload.username) || username;
     authForm.value.password = '';
     resetConversationState();
+    appendStoryNodeToHistory(currentNode.value);
   } catch (error) {
     console.error('auth request failed', error);
     authError.value = '无法连接服务器，请稍后重试';
@@ -243,7 +261,7 @@ const logout = () => {
   resetConversationState();
 };
 
-const fetchDialogueNode = async (character) => {
+const fetchDialogueNode = async (character, speakingOrder = []) => {
   if (!isAuthenticated.value) return;
   if (conversationHistory.value.length === 0) return;
 
@@ -271,7 +289,7 @@ const fetchDialogueNode = async (character) => {
       body: JSON.stringify({
         character: character,
         history: backendHistory,
-        storyContext: storyContext.value,
+        storyContext: getStoryContext(character, speakingOrder),
       }),
     });
 
@@ -335,12 +353,21 @@ const fetchDialogueNode = async (character) => {
           typeof message?.nextNode === 'string'
             ? message.nextNode
             : 'end';
+        const stateUpdates =
+          typeof message?.stateUpdates === 'object' && message.stateUpdates
+            ? message.stateUpdates
+            : {};
+        const evidenceUpdates = Array.isArray(message?.evidenceUpdates)
+          ? message.evidenceUpdates
+          : [];
 
         return {
           role: resolvedRole,
           content: rawContent,
           favorabilityChange: favorabilityDelta,
           nextNode: suggestedNextNode,
+          stateUpdates,
+          evidenceUpdates,
         };
       })
       .filter(Boolean);
@@ -364,14 +391,18 @@ const fetchDialogueNode = async (character) => {
       if (favorabilityTarget && message.favorabilityChange !== 0) {
         favorabilityTarget.favorability += message.favorabilityChange;
       }
-      applySuggestedNextNode(message.nextNode);
+      applyAgentResult(character, message);
+      const transition = applySuggestedNextNode(message.nextNode);
+      if (transition.applied) return transition;
     }
+    return { applied: false };
   } catch (error) {
     console.error('Fetch操作出现问题:', error);
     conversationHistory.value.push({
       role: 'system',
       content: `无法连接到服务器: ${error.message}`
     });
+    return { applied: false };
   }
 };
 
@@ -382,10 +413,12 @@ const startConversation = async (characterId) => {
   if (!storyClick.allowed) {
     return;
   }
-  if (storyClick.mode === 'story_dialogue') return;
+  if (storyClick.mode === 'story_dialogue') {
+    appendStoryNodeToHistory(currentNode.value, { includeClickNpc: true });
+    return;
+  }
   if (activeConversation.value === characterId) return;
   activeConversation.value = characterId;
-  conversationHistory.value = [];
   playerInput.value = '';
   showHistory.value = false;
 };
@@ -396,8 +429,13 @@ const sendPlayerInput = async () => {
   if (trimmedInput === '' || !activeConversation.value) return;
 
   conversationHistory.value.push({ role: 'player', content: trimmedInput });
+  appendSceneTurn('player', trimmedInput);
 
-  await fetchDialogueNode(activeConversation.value);
+  const speakingOrder = decideSpeakingOrder(activeConversation.value);
+  for (const speaker of speakingOrder) {
+    const transition = await fetchDialogueNode(speaker, speakingOrder);
+    if (transition?.applied) break;
+  }
   playerInput.value = '';
 };
 
@@ -419,6 +457,7 @@ watch(currentUser, (value) => {
 watch(
   () => storyState.value.currentNodeId,
   () => {
+    appendStoryNodeToHistory(currentNode.value);
     updateCharacterFocus();
   }
 );
@@ -492,6 +531,7 @@ onMounted(() => {
 
   initPixiApp();
   setupScene();
+  appendStoryNodeToHistory(currentNode.value);
 });
 </script>
 
