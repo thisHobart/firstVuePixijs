@@ -18,6 +18,10 @@
 
     <h1>古代互动小说：宫廷风云</h1>
     <h2>场景：金銮殿</h2>
+    <section class="intro-panel">
+      <h3>序章：初入金銮殿</h3>
+      <p>{{ introText }}</p>
+    </section>
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
 
     <!-- Dialogue History Log -->
@@ -98,6 +102,10 @@ import { characterPresets } from './assets/characterPresets';
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
 const characterStates = ref({});
+const introText =
+  '你是新科状元，初入朝堂。今日奉旨入宫，在金銮殿外等候召见。' +
+  '皇帝玄烨正在殿中议事，张廷玉侍立一旁，苏麻喇姑在殿侧候命，李德全负责传旨。' +
+  '这是你第一次真正接触宫廷权力中心，你的每一句话都可能影响他人对你的看法。';
 
 // Dialogue state
 const activeConversation = ref(null);
@@ -324,8 +332,7 @@ const startConversation = async (characterId) => {
   if (!isAuthenticated.value) return;
   if (characterId === 'player' || activeConversation.value) return;
   activeConversation.value = characterId;
-  conversationHistory.value = [{ role: 'player', content: '你好' }];
-  await fetchDialogueNode(characterId);
+  conversationHistory.value = [];
 };
 
 const sendPlayerInput = async () => {
@@ -421,6 +428,29 @@ onMounted(() => {
 
 .canvas-container {
   display: inline-block;
+}
+
+.intro-panel {
+  width: 820px;
+  margin: 0 auto 12px;
+  padding: 12px 18px;
+  box-sizing: border-box;
+  background: rgba(255, 248, 220, 0.92);
+  border: 1px solid #c7a35a;
+  color: #3d2a16;
+  text-align: left;
+}
+
+.intro-panel h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: #6d3f12;
+}
+
+.intro-panel p {
+  margin: 0;
+  line-height: 1.7;
+  font-size: 15px;
 }
 
 /* Dialogue Box */

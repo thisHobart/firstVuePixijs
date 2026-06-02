@@ -8,37 +8,67 @@ from dotenv import load_dotenv
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient
+from characters.personas import CHARACTER_PERSONAS, DEFAULT_PERSONA
+
+try:
+    from autogen_ext.models.ollama import OllamaChatCompletionClient
+except ImportError:
+    OllamaChatCompletionClient = None
 
 load_dotenv()
 
-# —— 读取第三方（OpenAI 兼容）环境变量 ——
-MODEL   = os.getenv("MODEL")
+# —— 读取模型配置 ——
+MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "openai").strip().lower()
+MODEL = os.getenv("MODEL")
 API_KEY = os.getenv("OPENAI_API_KEY")          # 你的第三方 key
 BASE_URL = os.getenv("OPENAI_API_URL")        # 你的第三方 base_url（OpenAI 兼容）
-TEMPERATURE = 0.7
 
-if not API_KEY:
-    raise ValueError("错误: 未找到 OPENAI_API_KEY（或 LLM_API_KEY）。请在 .env 中设置你的第三方平台密钥。")
-if not BASE_URL:
-    raise ValueError("错误: 未找到 OPENAI_BASE_URL（或 LLM_API_BASE）。请在 .env 中设置你的第三方接口 base_url。")
 if not MODEL:
-    raise ValueError("错误: 未找到 OPENAI_MODEL。请在 .env 中设置你的模型名称。")
+    raise ValueError("错误: 未找到 MODEL。请在 .env 中设置你的模型名称。")
+if MODEL_PROVIDER not in {"openai", "ollama"}:
+    raise ValueError("错误: MODEL_PROVIDER 只支持 openai 或 ollama。")
+if MODEL_PROVIDER == "openai":
+    if not API_KEY:
+        raise ValueError("错误: 未找到 OPENAI_API_KEY（或 LLM_API_KEY）。请在 .env 中设置你的第三方平台密钥。")
+    if not BASE_URL:
+        raise ValueError("错误: 未找到 OPENAI_BASE_URL（或 LLM_API_BASE）。请在 .env 中设置你的第三方接口 base_url。")
+if MODEL_PROVIDER == "ollama" and OllamaChatCompletionClient is None:
+    raise ValueError("错误: 当前环境缺少 autogen_ext.models.ollama，请确认已安装支持 Ollama 的 autogen-ext。")
 
 def _normalize_base(url: str | None):
     if not url:
         return None
     return url.rstrip("/")  # 避免双斜杠；一般需要以 /v1 结尾的完整地址
 
-character_personas = {
-    "emperor": (
-        "你是一位威言而睿智的古代中国皇帝。"
-        "你的话语简洁、有力，充满威严。"
-        "你要根据玩家的对话，分析其意图和礼仪，然后决定你对玩家的好感度变化。"
-        "请以JSON格式返回，包含'speaker', 'text', 'nextNode'和'favorabilityChange'。"
-        "favorabilityChange是一个整数，可以是-1（好感度下降），0（不变），或1（好感度上升）。"
-        "例如：{'speaker': 'emperor', 'text': '...', 'nextNode': 'end', 'favorabilityChange': 1}"
-    ),
-}
+def _create_model_client():
+    if MODEL_PROVIDER == "ollama":
+        return OllamaChatCompletionClient(
+            model=MODEL,
+            model_info={
+                "family": "unknown",
+                "vision": False,
+                "function_calling": False,
+                "json_output": True,
+                "structured_output": True,
+            },
+        )
+
+    return OpenAIChatCompletionClient(
+        model=MODEL,
+        api_key=API_KEY,
+        base_url=_normalize_base(BASE_URL),
+        model_info={
+            # 模型家族：可用枚举，也可用字符串 "unknown"
+            # 若你确知是 R1/LLAMA/CLAUDE 等系列，可换成对应常量；不确定就用 "unknown"
+            "family": "unknown",  # 或 ModelFamily.R1 / ModelFamily.GPT_4O / ...
+
+            # 下面这些布尔项按你的第三方实际能力填写：
+            "vision": False,  # 是否支持图像输入
+            "function_calling": False,  # 是否支持函数/工具调用（OpenAI-style tool calling）
+            "json_output": True,  # 是否支持 JSON 模式（非结构化 JSON）
+            "structured_output": True,  # 是否支持“结构化输出”（严格 schema）
+        },
+    )
 
 class AgentManager:
     """管理和缓存 Agent 实例以提高性能。"""
@@ -56,41 +86,14 @@ class AgentManager:
             input_func=_no_input,
         )
 
-        # ❷ 构造第三方 OpenAI 兼容的“模型客户端”（替代旧 llm_config）
-        # 注：不同小版本字段名可能是 default_request_kwargs / default_params / default_request_params
-        # 若你的小版本报未知参数，把 temperature 挪到 chat_once 里的请求参数传递（见下方注释）。
-        self._model_client = OpenAIChatCompletionClient(
-            model=MODEL,
-            api_key=API_KEY,
-            base_url=_normalize_base(BASE_URL),
-            model_info={
-                # 模型家族：可用枚举，也可用字符串 "unknown"
-                # 若你确知是 R1/LLAMA/CLAUDE 等系列，可换成对应常量；不确定就用 "unknown"
-                "family": "unknown",  # 或 ModelFamily.R1 / ModelFamily.GPT_4O / ...
+        self._model_client = _create_model_client()
 
-                # 下面这些布尔项按你的第三方实际能力填写：
-                "vision": False,  # 是否支持图像输入
-                "function_calling": False,  # 是否支持函数/工具调用（OpenAI-style tool calling）
-                "json_output": True,  # 是否支持 JSON 模式（非结构化 JSON）
-                "structured_output": True,  # 是否支持“结构化输出”（严格 schema）
-            },
-
-            # —— 默认生成参数（若你的小版本不支持此字段，删掉它） ——
-            default_request_kwargs={
-                "temperature": TEMPERATURE,
-                # 若第三方支持 seed，可加：
-                # "seed": 42,
-            },
-            # 如果第三方需要额外头部：
-            # extra_headers={"X-My-Vendor": "foo"},
-        )
-
-        print("AgentManager initialized.")
+        print(f"AgentManager initialized with {MODEL_PROVIDER} model: {MODEL}")
 
     def get_assistant(self, character: str) -> AssistantAgent:
         if character not in self._assistant_agents:
             print(f"Creating new assistant agent for: {character}")
-            persona = character_personas.get(character, "你是一个通用的NPC。")
+            persona = CHARACTER_PERSONAS.get(character, DEFAULT_PERSONA)
             self._assistant_agents[character] = AssistantAgent(
                 name=character,
                 model_client=self._model_client,   # ★ 用 model_client，替代 llm_config
@@ -108,14 +111,13 @@ class AgentManager:
         # —— 调优参数（可按需调大/调小） ——
         max_attempts = 3                 # 最大重试次数（总共尝试 3 次）
         base_delay  = 0.8                # 初始退避（秒）
-        per_req_timeout = 30             # 单次请求超时（秒）
+        per_req_timeout = 300             # 单次请求超时（秒）
         transient_codes = (429, 502, 503, 504)
 
         async def _call_once():
             # 如你的客户端没设默认温度，可在 request_kwargs 传；否则留空
             return await assistant.run(
                 task=user_text,
-                # request_kwargs={"temperature": 0.7}
             )
 
         def _is_transient(exc: Exception) -> bool:
@@ -281,4 +283,3 @@ async def generate_dialogue(character: str, conversation_history: list) -> List[
             "nextNode": "end",
             "favorabilityChange": 0,
         }]
-
