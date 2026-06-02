@@ -215,11 +215,14 @@ def _build_agent_task(trigger_text: str, story_context: Dict[str, Any] | None) -
     node_title = story_context.get("title", "")
     target_character = story_context.get("targetCharacter", "")
     speaking_order = story_context.get("speakingOrder") or []
+    completed_nodes = story_context.get("completedNodes") or []
     scene_memory = story_context.get("sceneMemory") or {}
     npc_memory = story_context.get("npcMemory") or {}
     available_next_nodes = story_context.get("availableNextNodes") or []
     if not isinstance(available_next_nodes, list):
         available_next_nodes = []
+    if not isinstance(completed_nodes, list):
+        completed_nodes = []
 
     return (
         "当前剧情上下文：\n"
@@ -228,11 +231,14 @@ def _build_agent_task(trigger_text: str, story_context: Dict[str, Any] | None) -
         f"- targetCharacter: {target_character}\n"
         f"- speakingOrder: {json.dumps(speaking_order, ensure_ascii=False)}\n"
         f"- availableNextNodes: {json.dumps(available_next_nodes, ensure_ascii=False)}\n"
+        f"- completedNodes: {json.dumps(completed_nodes, ensure_ascii=False)}\n"
         f"- sceneMemory: {json.dumps(scene_memory, ensure_ascii=False)}\n"
         f"- npcMemory: {json.dumps(npc_memory, ensure_ascii=False)}\n"
-        "规则：你可以根据当前触发文本和剧情上下文建议nextNode，但必须从availableNextNodes中选择。"
-        "如果当前对话不足以推动剧情，nextNode返回'end'。"
-        "不要编造availableNextNodes以外的剧情节点。\n"
+        "规则：普通对话或对峙不等于剧情推进。只有当玩家本轮发言产生新证据、明显说服当前NPC、"
+        "或触发与你角色相关的关键状态变化时，才可以建议nextNode。"
+        "如果当前对话不足以推动剧情，nextNode必须返回'end'。"
+        "nextNode必须从availableNextNodes中选择，且不能是completedNodes中已经完成过的节点。"
+        "不要编造availableNextNodes以外的剧情节点，也不要反复建议已经触发过的同一剧情。\n"
         "你必须参考sceneMemory.recentTurns，保持和前文说法一致，不能忘记自己或其他NPC刚才说过的话。"
         "如果你发现本轮对话触发了与你角色相关的状态变化，可以在stateUpdates中建议更新。"
         "角色可建议状态：minister只能建议ministerContradiction；maid只能建议maidHint；"
@@ -247,6 +253,24 @@ def _normalize_favorability_change(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return max(-5, min(5, delta))
+
+
+def _normalize_next_node(value: Any, story_context: Dict[str, Any] | None) -> str:
+    if not isinstance(value, str) or not value or value == "end":
+        return "end"
+    if not story_context:
+        return value
+
+    available_next_nodes = story_context.get("availableNextNodes") or []
+    completed_nodes = story_context.get("completedNodes") or []
+    if not isinstance(available_next_nodes, list):
+        available_next_nodes = []
+    if not isinstance(completed_nodes, list):
+        completed_nodes = []
+
+    if value not in available_next_nodes or value in completed_nodes:
+        return "end"
+    return value
 
 
 async def generate_dialogue(
@@ -292,6 +316,10 @@ async def generate_dialogue(
                 item.setdefault("favorabilityChange", 0)
                 item.setdefault("stateUpdates", {})
                 item.setdefault("evidenceUpdates", [])
+                item["nextNode"] = _normalize_next_node(
+                    item.get("nextNode"),
+                    story_context,
+                )
                 item["favorabilityChange"] = _normalize_favorability_change(
                     item.get("favorabilityChange")
                 )

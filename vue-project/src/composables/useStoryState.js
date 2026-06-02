@@ -43,6 +43,7 @@ export function useStoryState(getCharacterName, options = {}) {
   });
   const nodeDialogueVisible = ref(false);
   const storyNotice = ref('');
+  const pendingSuggestedNextNode = ref(null);
 
   const currentNode = computed(() => storyNodes[storyState.value.currentNodeId]);
   const isFreeInteraction = computed(() => currentNode.value?.type === 'free_interaction');
@@ -56,6 +57,7 @@ export function useStoryState(getCharacterName, options = {}) {
   });
   const canContinueStory = computed(() => {
     const node = currentNode.value;
+    if (pendingSuggestedNextNode.value) return true;
     if (!node || isFreeInteraction.value || node.type === 'player_input') return false;
     if (node.type === 'click_npc') return Boolean(nodeDialogueVisible.value && node.nextNodes?.length);
     return Boolean(node.autoNext);
@@ -94,6 +96,7 @@ export function useStoryState(getCharacterName, options = {}) {
 
   const advanceStory = (nextNodeId) => {
     if (!storyNodes[nextNodeId]) return;
+    pendingSuggestedNextNode.value = null;
     const currentId = storyState.value.currentNodeId;
     if (!storyState.value.completedNodes.includes(currentId)) {
       storyState.value.completedNodes.push(currentId);
@@ -105,6 +108,10 @@ export function useStoryState(getCharacterName, options = {}) {
   };
 
   const continueStory = () => {
+    if (pendingSuggestedNextNode.value) {
+      advanceStory(pendingSuggestedNextNode.value);
+      return;
+    }
     const node = currentNode.value;
     if (!node) return;
     if (node.type === 'click_npc' && node.nextNodes?.length) {
@@ -209,6 +216,10 @@ export function useStoryState(getCharacterName, options = {}) {
     if (!node || !suggestedNextNode || suggestedNextNode === 'end') {
       return { applied: false, reason: 'NO_TRANSITION' };
     }
+    if (suggestedNextNode === node.nodeId || storyState.value.completedNodes.includes(suggestedNextNode)) {
+      pushSystemMessage(`系统已忽略重复剧情跳转：${suggestedNextNode}`);
+      return { applied: false, reason: 'REPEATED_TRANSITION' };
+    }
     const allowedNextNodes = node.nextNodes || [];
     if (!allowedNextNodes.includes(suggestedNextNode)) {
       pushSystemMessage(`系统已忽略非法剧情跳转：${suggestedNextNode}`);
@@ -218,8 +229,9 @@ export function useStoryState(getCharacterName, options = {}) {
       pushSystemMessage(`系统已忽略未配置剧情节点：${suggestedNextNode}`);
       return { applied: false, reason: 'UNKNOWN_NODE' };
     }
-    advanceStory(suggestedNextNode);
-    return { applied: true, reason: 'APPLIED' };
+    pendingSuggestedNextNode.value = suggestedNextNode;
+    pushSystemMessage('已触发新的剧情进展，请先阅读当前对话，再点击“继续”。');
+    return { applied: true, reason: 'PENDING' };
   };
 
   return {
@@ -227,6 +239,7 @@ export function useStoryState(getCharacterName, options = {}) {
     sceneMemory,
     npcMemory,
     nodeDialogueVisible,
+    pendingSuggestedNextNode,
     storyNotice,
     currentNode,
     getStoryContext,

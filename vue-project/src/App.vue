@@ -64,8 +64,13 @@
       </div>
 
       <div class="input-container">
-        <input v-model="playerInput" @keyup.enter="sendPlayerInput" placeholder="你说……" />
-        <button @click="sendPlayerInput">发送</button>
+        <input
+          v-model="playerInput"
+          @keyup.enter="sendPlayerInput"
+          placeholder="你说……"
+          :disabled="Boolean(pendingSuggestedNextNode)"
+        />
+        <button @click="sendPlayerInput" :disabled="Boolean(pendingSuggestedNextNode)">发送</button>
         <button @click="toggleHistory" class="history-button">历史</button>
       </div>
     </div>
@@ -160,6 +165,7 @@ const {
   storyPanelText,
   canContinueStory,
   dialoguePlaceholderText,
+  pendingSuggestedNextNode,
   continueStory,
   chooseStoryOption,
   appendSceneTurn,
@@ -425,6 +431,7 @@ const startConversation = async (characterId) => {
 
 const sendPlayerInput = async () => {
   if (!isAuthenticated.value) return;
+  if (pendingSuggestedNextNode.value) return;
   const trimmedInput = playerInput.value.trim();
   if (trimmedInput === '' || !activeConversation.value) return;
 
