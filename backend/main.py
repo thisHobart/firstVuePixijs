@@ -45,6 +45,10 @@ class DialogueRequest(BaseModel):
 
     character: str
     history: List[Message] = Field(..., min_items=1, description="完整的对话历史")
+    storyContext: Dict[str, Any] | None = Field(
+        default=None,
+        description="当前剧情上下文，用于约束 Agent 的 nextNode 建议",
+    )
 
 
 @app.post("/api/dialogue", response_model=List[Dict[str, Any]])
@@ -53,11 +57,16 @@ async def dialogue(request: DialogueRequest):
 
     print(f"Received request for character: {request.character}")
     print(f"Conversation history: {request.history}")
+    print(f"Story context: {request.storyContext}")
 
     conversation_history_dict = [msg.model_dump() for msg in request.history]
 
     try:
-        response = await generate_dialogue(request.character, conversation_history_dict)
+        response = await generate_dialogue(
+            request.character,
+            conversation_history_dict,
+            request.storyContext,
+        )
     except Exception as exc:  # 捕获生成对话的异常，返回统一错误
         print("dialogue error:", repr(exc))
         raise HTTPException(status_code=500, detail=f"dialogue failed: {exc}") from exc

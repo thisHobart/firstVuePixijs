@@ -207,7 +207,41 @@ def _extract_json_from_text(text: str) -> Any:
     # If all strategies fail, raise
     raise json.JSONDecodeError("Unable to parse JSON from text", s, 0)
 
-async def generate_dialogue(character: str, conversation_history: list) -> List[Dict[str, Any]]:
+def _build_agent_task(user_text: str, story_context: Dict[str, Any] | None) -> str:
+    if not story_context:
+        return user_text
+
+    current_node = story_context.get("currentNodeId", "")
+    node_title = story_context.get("title", "")
+    available_next_nodes = story_context.get("availableNextNodes") or []
+    if not isinstance(available_next_nodes, list):
+        available_next_nodes = []
+
+    return (
+        "当前剧情上下文：\n"
+        f"- currentNode: {current_node}\n"
+        f"- title: {node_title}\n"
+        f"- availableNextNodes: {json.dumps(available_next_nodes, ensure_ascii=False)}\n"
+        "规则：你可以根据玩家输入建议nextNode，但必须从availableNextNodes中选择。"
+        "如果当前对话不足以推动剧情，nextNode返回'end'。"
+        "不要编造availableNextNodes以外的剧情节点。\n"
+        f"玩家输入：{user_text}"
+    )
+
+
+def _normalize_favorability_change(value: Any) -> int:
+    try:
+        delta = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(-5, min(5, delta))
+
+
+async def generate_dialogue(
+    character: str,
+    conversation_history: list,
+    story_context: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
     """单 Agent 一问一答：拿文本→优先解析 JSON→兜底文本"""
     try:
         # 1) 取用户的最后一句作为本轮输入
@@ -223,7 +257,8 @@ async def generate_dialogue(character: str, conversation_history: list) -> List[
 
         # 2) 调用新版 Autogen（封装在 AgentManager.chat_once 内）
         #    这里返回的是“模型最终可展示的文本”
-        text = await agent_manager.chat_once(character, last_message)
+        task = _build_agent_task(last_message, story_context)
+        text = await agent_manager.chat_once(character, task)
         text = (text or "").strip()
 
         # 3) 优先解析 JSON（支持 ```json fenced block、原始 JSON、首个 {...} 片段）
@@ -243,6 +278,9 @@ async def generate_dialogue(character: str, conversation_history: list) -> List[
                 item.setdefault("text", "")
                 item.setdefault("nextNode", "end")
                 item.setdefault("favorabilityChange", 0)
+                item["favorabilityChange"] = _normalize_favorability_change(
+                    item.get("favorabilityChange")
+                )
                 if isinstance(item["text"], str):
                     responses.append(item)
 

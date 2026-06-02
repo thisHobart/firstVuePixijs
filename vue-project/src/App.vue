@@ -19,8 +19,27 @@
     <h1>古代互动小说：宫廷风云</h1>
     <h2>场景：金銮殿</h2>
     <section class="intro-panel">
-      <h3>序章：初入金銮殿</h3>
-      <p>{{ introText }}</p>
+      <h3>{{ currentNode.title }}</h3>
+      <p>{{ storyPanelText }}</p>
+      <p v-if="storyNotice" class="story-notice">{{ storyNotice }}</p>
+      <div v-if="currentNode.type === 'player_input'" class="story-choice-list">
+        <button
+          v-for="choice in currentNode.choices"
+          :key="choice.id"
+          type="button"
+          @click="chooseStoryOption(choice)"
+        >
+          {{ choice.text }}
+        </button>
+      </div>
+      <button
+        v-if="canContinueStory"
+        type="button"
+        class="story-next-button"
+        @click="continueStory"
+      >
+        继续
+      </button>
     </section>
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
 
@@ -51,7 +70,7 @@
       </div>
     </div>
     <div v-else class="dialogue-box-placeholder">
-      <p>点击NPC开始对话</p>
+      <p>{{ dialoguePlaceholderText }}</p>
     </div>
 
     <div v-if="!isAuthenticated" class="auth-overlay">
@@ -98,14 +117,12 @@
 import * as PIXI from 'pixi.js';
 import { onMounted, ref, computed, nextTick, watch } from 'vue';
 import { characterPresets } from './assets/characterPresets';
+import { useStoryState } from './composables/useStoryState';
 
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
 const characterStates = ref({});
-const introText =
-  '你是新科状元，初入朝堂。今日奉旨入宫，在金銮殿外等候召见。' +
-  '皇帝玄烨正在殿中议事，张廷玉侍立一旁，苏麻喇姑在殿侧候命，李德全负责传旨。' +
-  '这是你第一次真正接触宫廷权力中心，你的每一句话都可能影响他人对你的看法。';
+const characterSprites = ref({});
 
 // Dialogue state
 const activeConversation = ref(null);
@@ -128,6 +145,32 @@ const getCharacterName = (id) => {
   return character ? character.name : '';
 };
 
+const clearDialogueState = () => {
+  activeConversation.value = null;
+  conversationHistory.value = [];
+  playerInput.value = '';
+  showHistory.value = false;
+};
+
+const {
+  storyState,
+  storyNotice,
+  currentNode,
+  storyContext,
+  storyPanelText,
+  canContinueStory,
+  dialoguePlaceholderText,
+  continueStory,
+  chooseStoryOption,
+  handleStoryCharacterClick,
+  applySuggestedNextNode,
+} = useStoryState(getCharacterName, {
+  onStoryAdvanced: clearDialogueState,
+  onStoryChoice: (choice) => {
+    conversationHistory.value = [{ role: 'player', content: choice.text }];
+  },
+});
+
 const getSpeakerName = (role) => {
   if (role === 'system') return '系统提示';
   const character = characterPresets.find(c => c.id === role);
@@ -149,10 +192,7 @@ const toggleAuthMode = () => {
 };
 
 const resetConversationState = () => {
-  activeConversation.value = null;
-  conversationHistory.value = [];
-  playerInput.value = '';
-  showHistory.value = false;
+  clearDialogueState();
 };
 
 const submitAuth = async () => {
@@ -230,7 +270,8 @@ const fetchDialogueNode = async (character) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         character: character,
-        history: backendHistory
+        history: backendHistory,
+        storyContext: storyContext.value,
       }),
     });
 
@@ -288,13 +329,18 @@ const fetchDialogueNode = async (character) => {
 
         const favorabilityDelta =
           typeof message?.favorabilityChange === 'number'
-            ? message.favorabilityChange
+            ? Math.max(-5, Math.min(5, Math.trunc(message.favorabilityChange)))
             : 0;
+        const suggestedNextNode =
+          typeof message?.nextNode === 'string'
+            ? message.nextNode
+            : 'end';
 
         return {
           role: resolvedRole,
           content: rawContent,
           favorabilityChange: favorabilityDelta,
+          nextNode: suggestedNextNode,
         };
       })
       .filter(Boolean);
@@ -318,6 +364,7 @@ const fetchDialogueNode = async (character) => {
       if (favorabilityTarget && message.favorabilityChange !== 0) {
         favorabilityTarget.favorability += message.favorabilityChange;
       }
+      applySuggestedNextNode(message.nextNode);
     }
   } catch (error) {
     console.error('Fetch操作出现问题:', error);
@@ -330,9 +377,17 @@ const fetchDialogueNode = async (character) => {
 
 const startConversation = async (characterId) => {
   if (!isAuthenticated.value) return;
-  if (characterId === 'player' || activeConversation.value) return;
+  if (characterId === 'player') return;
+  const storyClick = handleStoryCharacterClick(characterId);
+  if (!storyClick.allowed) {
+    return;
+  }
+  if (storyClick.mode === 'story_dialogue') return;
+  if (activeConversation.value === characterId) return;
   activeConversation.value = characterId;
   conversationHistory.value = [];
+  playerInput.value = '';
+  showHistory.value = false;
 };
 
 const sendPlayerInput = async () => {
@@ -361,6 +416,13 @@ watch(currentUser, (value) => {
   } catch (_) {}
 });
 
+watch(
+  () => storyState.value.currentNodeId,
+  () => {
+    updateCharacterFocus();
+  }
+);
+
 const initPixiApp = () => {
   const container = pixiCanvasContainer.value;
   const app = new PIXI.Application({
@@ -376,6 +438,7 @@ const setupScene = () => {
   if (!pixiApp.value) return;
   const stage = pixiApp.value.stage;
   stage.removeChildren();
+  characterSprites.value = {};
 
   const positions = [
     { x: 400, y: 500 }, { x: 400, y: 150 }, { x: 200, y: 300 },
@@ -388,7 +451,23 @@ const setupScene = () => {
     sprite.interactive = true;
     sprite.buttonMode = true;
     sprite.on('pointerdown', () => startConversation(character.id));
+    characterSprites.value[character.id] = sprite;
     stage.addChild(sprite);
+  });
+  updateCharacterFocus();
+}
+
+const updateCharacterFocus = () => {
+  const node = currentNode.value;
+  Object.entries(characterSprites.value).forEach(([id, sprite]) => {
+    if (id === 'player' || !node || (!node.lockedCharacter && !node.availableCharacters?.length)) {
+      sprite.alpha = 1;
+      return;
+    }
+    const isAllowed = node.lockedCharacter
+      ? id === node.lockedCharacter
+      : node.availableCharacters.includes(id);
+    sprite.alpha = isAllowed ? 1 : 0.3;
   });
 }
 
@@ -451,6 +530,42 @@ onMounted(() => {
   margin: 0;
   line-height: 1.7;
   font-size: 15px;
+}
+
+.story-notice {
+  margin-top: 8px;
+  color: #9a1f1f;
+  font-weight: 600;
+}
+
+.story-choice-list {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.story-choice-list button,
+.story-next-button {
+  padding: 8px 12px;
+  border: 1px solid #8a6530;
+  background: #6d3f12;
+  color: #fff7dd;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.story-choice-list button {
+  flex: 1;
+  text-align: left;
+}
+
+.story-choice-list button:hover,
+.story-next-button:hover {
+  background: #8b541d;
+}
+
+.story-next-button {
+  margin-top: 10px;
 }
 
 /* Dialogue Box */
