@@ -212,6 +212,12 @@ def _build_agent_task(trigger_text: str, story_context: Dict[str, Any] | None) -
     target_character = story_context.get("targetCharacter", "")
     speaking_order = story_context.get("speakingOrder") or []
     completed_nodes = story_context.get("completedNodes") or []
+    current_stage = story_context.get("currentStage") or {}
+    case_truth = story_context.get("caseTruth") or {}
+    evidence_chain = story_context.get("evidenceChain") or {}
+    npc_profiles = story_context.get("npcProfiles") or {}
+    interrogation_state = story_context.get("interrogationState") or {}
+    interruption_rules = story_context.get("interruptionRules") or []
     scene_memory = story_context.get("sceneMemory") or {}
     npc_memory = story_context.get("npcMemory") or {}
     available_next_nodes = story_context.get("availableNextNodes") or []
@@ -226,19 +232,33 @@ def _build_agent_task(trigger_text: str, story_context: Dict[str, Any] | None) -
         f"- title: {node_title}\n"
         f"- targetCharacter: {target_character}\n"
         f"- speakingOrder: {json.dumps(speaking_order, ensure_ascii=False)}\n"
+        f"- currentStage: {json.dumps(current_stage, ensure_ascii=False)}\n"
         f"- availableNextNodes: {json.dumps(available_next_nodes, ensure_ascii=False)}\n"
         f"- completedNodes: {json.dumps(completed_nodes, ensure_ascii=False)}\n"
+        f"- caseTruth: {json.dumps(case_truth, ensure_ascii=False)}\n"
+        f"- evidenceChain: {json.dumps(evidence_chain, ensure_ascii=False)}\n"
+        f"- npcProfiles: {json.dumps(npc_profiles, ensure_ascii=False)}\n"
+        f"- interrogationState: {json.dumps(interrogation_state, ensure_ascii=False)}\n"
+        f"- interruptionRules: {json.dumps(interruption_rules, ensure_ascii=False)}\n"
         f"- sceneMemory: {json.dumps(scene_memory, ensure_ascii=False)}\n"
         f"- npcMemory: {json.dumps(npc_memory, ensure_ascii=False)}\n"
-        "规则：普通对话或对峙不等于剧情推进。只有当玩家本轮发言产生新证据、明显说服当前NPC、"
+        "规则：free_interrogation是乾清宫同场景多人审问，所有NPC都在场，"
+        "你能听见sceneMemory.recentTurns中的公开对话，即使玩家刚才不是直接对你说话。"
+        "你必须结合当前阶段、已获得证据、NPC隐瞒信息和interrogationState判断自己是否应答或插话。"
+        "不得让NPC说出自己不知道的信息；被列入hides的信息只能在触发条件满足且符合当前阶段时谨慎透露。"
+        "普通对话或对峙不等于剧情推进。只有当玩家本轮发言产生新证据、明显说服当前NPC、"
         "或触发与你角色相关的关键状态变化时，才可以建议nextNode。"
         "如果当前对话不足以推动剧情，nextNode必须返回'end'。"
         "nextNode必须从availableNextNodes中选择，且不能是completedNodes中已经完成过的节点。"
+        "未形成证据链前不得建议final_judgement。"
         "不要编造availableNextNodes以外的剧情节点，也不要反复建议已经触发过的同一剧情。\n"
         "你必须参考sceneMemory.recentTurns，保持和前文说法一致，不能忘记自己或其他NPC刚才说过的话。"
         "如果你发现本轮对话触发了与你角色相关的状态变化，可以在stateUpdates中建议更新。"
-        "角色可建议状态：minister只能建议ministerContradiction；maid只能建议maidHint；"
-        "eunuch只能建议eunuchWitness；emperor只能建议emperorTrust。\n"
+        "允许的stateUpdates字段：minister可建议ministerContradictionFound、ministerLedgerSuppressed；"
+        "maid可建议maidHandwritingHint；eunuch可建议eunuchEntryRecord；emperor可建议emperorTrust。"
+        "允许的evidenceUpdates证据ID：bloodLetter、handwritingHint、palaceEntryRecord、ledgerClue、borderArmyLink。"
+        "只有信息来源与当前NPC知道的信息匹配时，才可以新增证据。"
+        "当玩家只拿血书直接逼皇帝查皇子，应判定证据不足；当玩家串联笔迹、出入记录、户部副账、边军粮草时，才允许推进。\n"
         f"当前触发文本：{trigger_text}"
     )
 

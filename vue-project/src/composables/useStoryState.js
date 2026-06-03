@@ -1,42 +1,89 @@
 import { computed, ref } from 'vue';
+import {
+  caseTruth,
+  createInitialEvidenceState,
+  createInitialInterrogationState,
+  evidenceChain,
+  interruptionRules,
+  npcProfiles,
+  storyStages,
+} from '../assets/caseDesign';
 import { storyNodes } from '../assets/storyNodes';
+
+const evidenceAliases = {
+  blood_letter: 'bloodLetter',
+  maidHint: 'handwritingHint',
+  eunuchWitness: 'palaceEntryRecord',
+  ministerContradiction: 'ledgerClue',
+};
+
+const flagAliases = {
+  ministerContradiction: 'ministerContradictionFound',
+  maidHint: 'maidHandwritingHint',
+  eunuchWitness: 'eunuchEntryRecord',
+};
 
 export function useStoryState(getCharacterName, options = {}) {
   const storyState = ref({
     currentNodeId: 'prologue',
+    currentStageId: 'stage_1',
     completedNodes: [],
     playerChoices: {},
-    flags: {},
+    interrogation: createInitialInterrogationState(),
+    flags: {
+      ministerContradictionFound: false,
+      ministerLedgerSuppressed: false,
+      recklessAccusation: false,
+      finalJudgementReady: false,
+    },
   });
   const sceneMemory = ref({
-    summary: '玩家正在乾清宫内证明血书密信真伪，并试图在半个时辰内找出皇子党与边将勾结的证据。',
+    summary: caseTruth.summary,
     recentTurns: [],
-    evidence: ['blood_letter'],
+    evidence: createInitialEvidenceState(),
     flags: {
-      ministerContradiction: false,
-      maidHint: false,
-      eunuchWitness: false,
+      ministerContradictionFound: false,
+      ministerLedgerSuppressed: false,
+      maidHandwritingHint: false,
+      eunuchEntryRecord: false,
       emperorTrust: false,
+      finalJudgementReady: false,
     },
   });
   const npcMemory = ref({
     emperor: {
       stance: 'test_everyone',
+      goal: npcProfiles.emperor.goal,
+      fear: npcProfiles.emperor.fear,
+      knows: npcProfiles.emperor.knows,
+      hides: npcProfiles.emperor.hides,
       notes: ['表面震怒，实则观察殿内众人的反应。'],
       lastClaims: [],
     },
     minister: {
       stance: 'protect_prince',
-      notes: ['表面维护国本，实则暗中袒护涉案皇子。'],
+      goal: npcProfiles.minister.goal,
+      fear: npcProfiles.minister.fear,
+      knows: npcProfiles.minister.knows,
+      hides: npcProfiles.minister.hides,
+      notes: ['表面维护国本，实则压下关键证据以保住朝局。'],
       lastClaims: [],
     },
     maid: {
       stance: 'protect_emperor',
+      goal: npcProfiles.maid.goal,
+      fear: npcProfiles.maid.fear,
+      knows: npcProfiles.maid.knows,
+      hides: npcProfiles.maid.hides,
       notes: ['知道皇帝真正的心理底线，但不能直接明说。'],
       lastClaims: [],
     },
     eunuch: {
       stance: 'self_preservation',
+      goal: npcProfiles.eunuch.goal,
+      fear: npcProfiles.eunuch.fear,
+      knows: npcProfiles.eunuch.knows,
+      hides: npcProfiles.eunuch.hides,
       notes: ['知道今夜乾清宫内外出入记录，但怕牵连自身。'],
       lastClaims: [],
     },
@@ -46,7 +93,55 @@ export function useStoryState(getCharacterName, options = {}) {
   const pendingSuggestedNextNode = ref(null);
 
   const currentNode = computed(() => storyNodes[storyState.value.currentNodeId]);
+  const currentStage = computed(() => storyStages[storyState.value.currentStageId]);
   const isFreeInteraction = computed(() => currentNode.value?.type === 'free_interaction');
+  const normalizeEvidenceId = (evidenceId) => evidenceAliases[evidenceId] || evidenceId;
+  const normalizeFlagId = (flagId) => flagAliases[flagId] || flagId;
+  const hasEvidence = (evidenceId) => Boolean(sceneMemory.value.evidence[normalizeEvidenceId(evidenceId)]);
+  const markEvidence = (evidenceId) => {
+    evidenceId = normalizeEvidenceId(evidenceId);
+    if (!Object.prototype.hasOwnProperty.call(evidenceChain, evidenceId)) return false;
+    if (sceneMemory.value.evidence[evidenceId]) return false;
+    sceneMemory.value.evidence[evidenceId] = true;
+    return true;
+  };
+  const markFlag = (flagId, value = true) => {
+    flagId = normalizeFlagId(flagId);
+    if (!Object.prototype.hasOwnProperty.call(sceneMemory.value.flags, flagId)) return false;
+    sceneMemory.value.flags[flagId] = value;
+    if (Object.prototype.hasOwnProperty.call(storyState.value.flags, flagId)) {
+      storyState.value.flags[flagId] = value;
+    }
+    return true;
+  };
+  const updateStoryStage = () => {
+    const visitedCount = storyState.value.interrogation.visitedCharacters.length;
+    const flags = sceneMemory.value.flags;
+    if (
+      hasEvidence('borderArmyLink') ||
+      (hasEvidence('handwritingHint') &&
+        hasEvidence('palaceEntryRecord') &&
+        hasEvidence('ledgerClue') &&
+        flags.ministerContradictionFound)
+    ) {
+      storyState.value.currentStageId = 'stage_5';
+      markFlag('finalJudgementReady', true);
+      return;
+    }
+    if (hasEvidence('ledgerClue') && hasEvidence('palaceEntryRecord') && flags.ministerContradictionFound) {
+      storyState.value.currentStageId = 'stage_4';
+      return;
+    }
+    if (hasEvidence('handwritingHint') || hasEvidence('palaceEntryRecord') || flags.ministerContradictionFound) {
+      storyState.value.currentStageId = 'stage_3';
+      return;
+    }
+    if (isFreeInteraction.value || visitedCount > 0) {
+      storyState.value.currentStageId = 'stage_2';
+      return;
+    }
+    storyState.value.currentStageId = 'stage_1';
+  };
   const storyPanelText = computed(() => {
     const node = currentNode.value;
     if (!node) return '';
@@ -83,6 +178,13 @@ export function useStoryState(getCharacterName, options = {}) {
       availableCharacters: node.availableCharacters || [],
       completedNodes: storyState.value.completedNodes,
       playerChoices: storyState.value.playerChoices,
+      currentStageId: storyState.value.currentStageId,
+      currentStage: currentStage.value,
+      caseTruth,
+      evidenceChain,
+      npcProfiles,
+      interruptionRules,
+      interrogationState: storyState.value.interrogation,
       targetCharacter,
       speakingOrder,
       sceneMemory: sceneMemory.value,
@@ -104,6 +206,7 @@ export function useStoryState(getCharacterName, options = {}) {
     storyState.value.currentNodeId = nextNodeId;
     storyNotice.value = '';
     nodeDialogueVisible.value = false;
+    updateStoryStage();
     options.onStoryAdvanced?.();
   };
 
@@ -126,7 +229,7 @@ export function useStoryState(getCharacterName, options = {}) {
   const appendSceneTurn = (speaker, text) => {
     if (!speaker || !text) return;
     sceneMemory.value.recentTurns.push({ speaker, text });
-    sceneMemory.value.recentTurns = sceneMemory.value.recentTurns.slice(-12);
+    sceneMemory.value.recentTurns = sceneMemory.value.recentTurns.slice(-18);
   };
 
   const chooseStoryOption = (choice) => {
@@ -138,75 +241,126 @@ export function useStoryState(getCharacterName, options = {}) {
     advanceStory(choice.nextNode);
   };
 
+  const recordInterrogationTurn = (targetCharacter) => {
+    const interrogation = storyState.value.interrogation;
+    interrogation.currentTarget = targetCharacter;
+    if (Object.prototype.hasOwnProperty.call(interrogation.turnCounts, targetCharacter)) {
+      interrogation.turnCounts[targetCharacter] += 1;
+    }
+    if (!interrogation.visitedCharacters.includes(targetCharacter)) {
+      interrogation.visitedCharacters.push(targetCharacter);
+    }
+    updateStoryStage();
+  };
+
+  const addInterjection = (order, speaker, ruleId, once = true) => {
+    const interrogation = storyState.value.interrogation;
+    if (!speaker || order.includes(speaker)) return;
+    if (once && interrogation.triggeredInterjections.includes(ruleId)) return;
+    order.push(speaker);
+    if (ruleId) {
+      interrogation.triggeredInterjections.push(ruleId);
+    }
+  };
+
   const decideSpeakingOrder = (targetCharacter) => {
     if (!isFreeInteraction.value) return [targetCharacter];
+    recordInterrogationTurn(targetCharacter);
     const flags = sceneMemory.value.flags;
     const getFavorability =
       typeof options.getCharacterFavorability === 'function'
         ? options.getCharacterFavorability
         : () => 50;
     const order = [targetCharacter];
-    const addSpeaker = (speaker) => {
-      if (speaker && speaker !== targetCharacter && !order.includes(speaker)) {
-        order.push(speaker);
-      }
-    };
+    const turns = storyState.value.interrogation.turnCounts;
 
     if (targetCharacter === 'minister') {
-      const ministerClaims = npcMemory.value.minister?.lastClaims?.length || 0;
+      const ministerTurns = turns.minister || 0;
       const ministerFavorability = getFavorability('minister');
 
-      if (ministerClaims >= 1 || ministerFavorability <= 45 || flags.ministerContradiction) {
-        addSpeaker('emperor');
+      if (ministerTurns >= 1 || ministerFavorability <= 45 || flags.ministerContradictionFound) {
+        addInterjection(order, 'emperor', 'minister_emperor_pressure');
       }
-      if (ministerClaims >= 2 || ministerFavorability <= 40 || flags.ministerContradiction) {
-        addSpeaker('maid');
+      if (
+        ministerTurns >= 2 ||
+        ministerFavorability <= 40 ||
+        hasEvidence('handwritingHint') ||
+        flags.ministerContradictionFound
+      ) {
+        addInterjection(order, 'maid', 'minister_maid_handwriting');
       }
-      if (flags.eunuchWitness || ministerFavorability <= 35) {
-        addSpeaker('eunuch');
+      if (hasEvidence('palaceEntryRecord') || ministerFavorability <= 35 || flags.eunuchEntryRecord) {
+        addInterjection(order, 'eunuch', 'minister_eunuch_entry');
       }
       return order;
     }
     if (targetCharacter === 'maid') {
-      return ['maid', 'emperor'];
+      if (hasEvidence('handwritingHint') || turns.maid >= 1) {
+        addInterjection(order, 'emperor', 'maid_emperor_reconsider');
+      }
+      return order;
     }
     if (targetCharacter === 'eunuch') {
-      return ['eunuch', 'minister'];
+      if (hasEvidence('palaceEntryRecord') || turns.eunuch >= 1) {
+        addInterjection(order, 'minister', 'eunuch_minister_rebuttal');
+      }
+      if (hasEvidence('palaceEntryRecord')) {
+        addInterjection(order, 'emperor', 'eunuch_emperor_entry', true);
+      }
+      return order;
     }
     if (targetCharacter === 'emperor') {
-      return ['emperor', 'minister'];
+      if (!hasEvidence('ledgerClue') || !hasEvidence('palaceEntryRecord')) {
+        addInterjection(order, 'minister', 'emperor_minister_deflect', true);
+      }
+      return order;
     }
-    return [targetCharacter];
+    return order;
   };
 
   const applyAgentResult = (speaker, message) => {
     appendSceneTurn(message.role || speaker, message.content);
 
     const allowedFlagBySpeaker = {
-      minister: 'ministerContradiction',
-      maid: 'maidHint',
-      eunuch: 'eunuchWitness',
+      minister: ['ministerContradictionFound', 'ministerLedgerSuppressed'],
+      maid: ['maidHandwritingHint'],
+      eunuch: ['eunuchEntryRecord'],
       emperor: 'emperorTrust',
     };
-    const allowedFlag = allowedFlagBySpeaker[speaker];
+    const allowedFlags = []
+      .concat(allowedFlagBySpeaker[speaker] || [])
+      .filter(Boolean);
     const stateUpdates = message.stateUpdates || {};
-    if (allowedFlag && typeof stateUpdates[allowedFlag] === 'boolean') {
-      sceneMemory.value.flags[allowedFlag] = stateUpdates[allowedFlag];
+    for (const [rawFlagId, rawValue] of Object.entries(stateUpdates)) {
+      const flagId = normalizeFlagId(rawFlagId);
+      if (allowedFlags.includes(flagId) && typeof rawValue === 'boolean') {
+        markFlag(flagId, rawValue);
+      }
     }
 
     const evidenceUpdates = Array.isArray(message.evidenceUpdates)
       ? message.evidenceUpdates
       : [];
     for (const evidence of evidenceUpdates) {
-      if (typeof evidence === 'string' && !sceneMemory.value.evidence.includes(evidence)) {
-        sceneMemory.value.evidence.push(evidence);
+      if (typeof evidence === 'string') {
+        markEvidence(evidence);
       }
+    }
+    if (sceneMemory.value.flags.maidHandwritingHint) {
+      markEvidence('handwritingHint');
+    }
+    if (sceneMemory.value.flags.eunuchEntryRecord) {
+      markEvidence('palaceEntryRecord');
+    }
+    if (sceneMemory.value.flags.ministerLedgerSuppressed) {
+      markEvidence('ledgerClue');
     }
 
     if (npcMemory.value[speaker]) {
       npcMemory.value[speaker].lastClaims.push(message.content);
       npcMemory.value[speaker].lastClaims = npcMemory.value[speaker].lastClaims.slice(-4);
     }
+    updateStoryStage();
   };
 
   const handleStoryCharacterClick = (characterId) => {
@@ -237,6 +391,10 @@ export function useStoryState(getCharacterName, options = {}) {
     if (!node || !suggestedNextNode || suggestedNextNode === 'end') {
       return { applied: false, reason: 'NO_TRANSITION' };
     }
+    if (suggestedNextNode === 'final_judgement' && !sceneMemory.value.flags.finalJudgementReady) {
+      pushSystemMessage('证据链尚未完整，暂不能进入最终裁断。');
+      return { applied: false, reason: 'EVIDENCE_INCOMPLETE' };
+    }
     if (suggestedNextNode === node.nodeId || storyState.value.completedNodes.includes(suggestedNextNode)) {
       pushSystemMessage(`系统已忽略重复剧情跳转：${suggestedNextNode}`);
       return { applied: false, reason: 'REPEATED_TRANSITION' };
@@ -259,6 +417,7 @@ export function useStoryState(getCharacterName, options = {}) {
     storyState,
     sceneMemory,
     npcMemory,
+    currentStage,
     nodeDialogueVisible,
     pendingSuggestedNextNode,
     storyNotice,
@@ -275,6 +434,7 @@ export function useStoryState(getCharacterName, options = {}) {
     appendSceneTurn,
     decideSpeakingOrder,
     applyAgentResult,
+    hasEvidence,
     handleStoryCharacterClick,
     applySuggestedNextNode,
   };
