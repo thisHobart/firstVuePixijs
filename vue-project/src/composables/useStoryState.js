@@ -141,10 +141,31 @@ export function useStoryState(getCharacterName, options = {}) {
   const decideSpeakingOrder = (targetCharacter) => {
     if (!isFreeInteraction.value) return [targetCharacter];
     const flags = sceneMemory.value.flags;
+    const getFavorability =
+      typeof options.getCharacterFavorability === 'function'
+        ? options.getCharacterFavorability
+        : () => 50;
+    const order = [targetCharacter];
+    const addSpeaker = (speaker) => {
+      if (speaker && speaker !== targetCharacter && !order.includes(speaker)) {
+        order.push(speaker);
+      }
+    };
+
     if (targetCharacter === 'minister') {
-      return flags.eunuchWitness
-        ? ['minister', 'maid', 'emperor']
-        : ['minister'];
+      const ministerClaims = npcMemory.value.minister?.lastClaims?.length || 0;
+      const ministerFavorability = getFavorability('minister');
+
+      if (ministerClaims >= 1 || ministerFavorability <= 45 || flags.ministerContradiction) {
+        addSpeaker('emperor');
+      }
+      if (ministerClaims >= 2 || ministerFavorability <= 40 || flags.ministerContradiction) {
+        addSpeaker('maid');
+      }
+      if (flags.eunuchWitness || ministerFavorability <= 35) {
+        addSpeaker('eunuch');
+      }
+      return order;
     }
     if (targetCharacter === 'maid') {
       return ['maid', 'emperor'];

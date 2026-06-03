@@ -25,15 +25,20 @@ def _hash_password(plain: str) -> str:
 
 
 async def register_user(username: str, password: str) -> AuthResult:
+    username = username.strip()
+    if await db.fetch_user(username):
+        raise DuplicateUsernameError("username already exists")
+
     try:
         record = await db.create_user(username, _hash_password(password))
     except errors.UniqueViolation as exc:
-        raise DuplicateUsernameError(str(exc)) from exc
+        raise DuplicateUsernameError("username already exists") from exc
 
     return AuthResult(username=record.get("username", username), created_at=record.get("created_at"))
 
 
 async def authenticate_user(username: str, password: str) -> Optional[AuthResult]:
+    username = username.strip()
     user = await db.fetch_user(username)
     if not user:
         return None

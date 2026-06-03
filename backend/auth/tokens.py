@@ -52,6 +52,16 @@ def create_access_token(username: str) -> str:
     return f"{signing_input}.{_sign(signing_input)}"
 
 
+def mask_token(token: str) -> str:
+    if len(token) <= 24:
+        return "***"
+    return f"{token[:12]}...{token[-8:]}"
+
+
+def token_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
 def verify_access_token(token: str) -> dict[str, Any]:
     try:
         header_part, payload_part, signature = token.split(".", 2)

@@ -65,6 +65,19 @@
         <p class="dialogue-text">{{ lastMessage.content }}</p>
       </div>
 
+      <div v-if="availableConversationCharacters.length > 1" class="speaker-switcher">
+        <button
+          v-for="characterId in availableConversationCharacters"
+          :key="characterId"
+          type="button"
+          :class="{ active: activeConversation === characterId }"
+          :disabled="dialogueLoading || Boolean(pendingSuggestedNextNode)"
+          @click="startConversation(characterId)"
+        >
+          {{ getCharacterName(characterId) }}
+        </button>
+      </div>
+
       <div class="input-container">
         <input
           v-model="playerInput"
@@ -191,10 +204,17 @@ const {
   handleStoryCharacterClick,
   applySuggestedNextNode,
 } = useStoryState(getCharacterName, {
+  getCharacterFavorability: (characterId) => characterStates.value[characterId]?.favorability ?? 50,
   onStoryAdvanced: clearActiveConversationState,
   onStoryChoice: (choice) => {
     conversationHistory.value.push({ role: 'player', content: choice.text });
   },
+});
+
+const availableConversationCharacters = computed(() => {
+  const node = currentNode.value;
+  if (node?.type !== 'free_interaction') return [];
+  return (node.availableCharacters || []).filter((characterId) => characterId !== 'player');
 });
 
 const getSpeakerName = (role) => {
@@ -259,6 +279,10 @@ const submitAuth = async () => {
       payload = null;
     }
     if (!response.ok) {
+      if (authMode.value === 'register' && response.status === 409) {
+        authError.value = '用户名已经存在，请换一个用户名';
+        return;
+      }
       authError.value =
         (payload && (payload.detail || payload.message)) || '请求失败，请稍后重试';
       return;
@@ -709,6 +733,32 @@ onMounted(async () => {
 .dialogue-text {
   margin: 0;
   white-space: pre-wrap; /* Allows text to wrap */
+}
+
+.speaker-switcher {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.speaker-switcher button {
+  padding: 6px 12px;
+  border: 1px solid #777;
+  border-radius: 5px;
+  background: #2d2d2d;
+  color: #fff;
+  cursor: pointer;
+}
+
+.speaker-switcher button.active {
+  border-color: #f0c54f;
+  background: #6d3f12;
+  color: #fff7dd;
+}
+
+.speaker-switcher button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* Input Controls */

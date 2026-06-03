@@ -11,7 +11,13 @@ from .service import (
     load_profile,
     register_user,
 )
-from .tokens import TokenError, create_access_token, verify_access_token
+from .tokens import (
+    TokenError,
+    create_access_token,
+    mask_token,
+    token_fingerprint,
+    verify_access_token,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -40,6 +46,12 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户不存在",
         )
+    print(
+        "Authenticated token:",
+        f"user={user.username}",
+        f"token={mask_token(credentials.credentials)}",
+        f"fingerprint={token_fingerprint(credentials.credentials)}",
+    )
     return user
 
 
@@ -48,7 +60,7 @@ async def register(credentials: Credentials) -> AuthResponse:
     try:
         result = await register_user(credentials.username, credentials.password)
     except DuplicateUsernameError as exc:
-        raise HTTPException(status_code=409, detail="??????") from exc
+        raise HTTPException(status_code=409, detail="用户名已经存在，请换一个用户名") from exc
 
     return AuthResponse(
         message="注册成功",
