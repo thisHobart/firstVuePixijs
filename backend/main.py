@@ -4,18 +4,21 @@ from __future__ import annotations
 import json as _json
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from agent import generate_dialogue
-from auth.models import AuthResponse, Credentials, ProfileResponse
+from auth.schemas import AuthResponse, Credentials, ProfileResponse
 from auth.service import (
+    AuthResult,
     DuplicateUsernameError,
     authenticate_user,
     load_profile,
     register_user,
 )
+from auth.tokens import TokenError, create_access_token, verify_access_token
 
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
@@ -31,6 +34,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> AuthResult:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="请先登录",
+        )
+
+    try:
+        payload = verify_access_token(credentials.credentials)
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录已失效，请重新登录",
+        ) from exc
+
+    user = await load_profile(payload["sub"])
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户不存在",
+        )
+    return user
 
 
 class Message(BaseModel):
@@ -52,9 +83,13 @@ class DialogueRequest(BaseModel):
 
 
 @app.post("/api/dialogue", response_model=List[Dict[str, Any]])
-async def dialogue(request: DialogueRequest):
+async def dialogue(
+    request: DialogueRequest,
+    current_user: AuthResult = Depends(get_current_user),
+):
     """根据已有对话历史生成下一轮剧情."""
 
+    print(f"Authenticated user: {current_user.username}")
     print(f"Received request for character: {request.character}")
     print(f"Conversation history: {request.history}")
     print(f"Story context: {request.storyContext}")
@@ -88,7 +123,11 @@ async def register(credentials: Credentials) -> AuthResponse:
     except DuplicateUsernameError as exc:
         raise HTTPException(status_code=409, detail="用户名已存在") from exc
 
-    return AuthResponse(message="注册成功", username=result.username)
+    return AuthResponse(
+        message="注册成功",
+        username=result.username,
+        access_token=create_access_token(result.username),
+    )
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
@@ -99,18 +138,18 @@ async def login(credentials: Credentials) -> AuthResponse:
     if not result:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-    return AuthResponse(message="登录成功", username=result.username)
+    return AuthResponse(
+        message="登录成功",
+        username=result.username,
+        access_token=create_access_token(result.username),
+    )
 
 
 @app.get("/api/auth/profile", response_model=ProfileResponse)
-async def profile(username: str) -> ProfileResponse:
+async def profile(current_user: AuthResult = Depends(get_current_user)) -> ProfileResponse:
     """查询用户档案信息."""
 
-    result = await load_profile(username)
-    if not result:
-        raise HTTPException(status_code=404, detail="用户不存在")
-
-    return ProfileResponse(username=result.username, created_at=result.created_at)
+    return ProfileResponse(username=current_user.username, created_at=current_user.created_at)
 
 
 if __name__ == "__main__":

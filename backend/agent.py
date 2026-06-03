@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import random
 import os
 from typing import List, Dict, Any
@@ -6,7 +7,7 @@ import json
 import re
 from dotenv import load_dotenv
 
-from autogen_agentchat.agents import AssistantAgent, UserProxyAgent
+from autogen_agentchat.agents import AssistantAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from characters.personas import CHARACTER_PERSONAS, DEFAULT_PERSONA
 
@@ -71,43 +72,36 @@ def _create_model_client():
     )
 
 class AgentManager:
-    """管理和缓存 Agent 实例以提高性能。"""
+    """Create isolated Agent instances for each model call."""
 
     def __init__(self):
-        self._assistant_agents: Dict[str, AssistantAgent] = {}
+        max_concurrent = int(os.getenv("DIALOGUE_MAX_CONCURRENT", "5"))
+        self._dialogue_semaphore = asyncio.Semaphore(max_concurrent)
 
-        # ❶ 不阻塞的输入函数
-        def _no_input(prompt: str = "") -> str:
-            return ""
-
-        self._user_proxy_agent = UserProxyAgent(
-            name="user_proxy",
-            description="A programmatic user (no interactive input).",
-            input_func=_no_input,
+        print(
+            f"AgentManager initialized with {MODEL_PROVIDER} model: {MODEL}; "
+            f"max concurrent dialogue calls: {max_concurrent}"
         )
 
-        self._model_client = _create_model_client()
+    def _create_assistant(self, character: str) -> tuple[AssistantAgent, Any]:
+        persona = CHARACTER_PERSONAS.get(character, DEFAULT_PERSONA)
+        model_client = _create_model_client()
+        assistant = AssistantAgent(
+            name=character,
+            model_client=model_client,
+            system_message=persona,
+        )
+        return assistant, model_client
 
-        print(f"AgentManager initialized with {MODEL_PROVIDER} model: {MODEL}")
-
-    def get_assistant(self, character: str) -> AssistantAgent:
-        if character not in self._assistant_agents:
-            print(f"Creating new assistant agent for: {character}")
-            persona = CHARACTER_PERSONAS.get(character, DEFAULT_PERSONA)
-            self._assistant_agents[character] = AssistantAgent(
-                name=character,
-                model_client=self._model_client,   # ★ 用 model_client，替代 llm_config
-                system_message=persona,
-                # 如需流式：model_client_stream=True,
-            )
-        return self._assistant_agents[character]
-
-    def get_user_proxy(self) -> UserProxyAgent:
-        return self._user_proxy_agent
+    async def _close_model_client(self, model_client: Any) -> None:
+        close = getattr(model_client, "close", None)
+        if not callable(close):
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
     async def chat_once(self, character: str, user_text: str) -> str:
-        assistant = self.get_assistant(character)
-
         # —— 调优参数（可按需调大/调小） ——
         max_attempts = 3                 # 最大重试次数（总共尝试 3 次）
         base_delay  = 0.8                # 初始退避（秒）
@@ -115,10 +109,11 @@ class AgentManager:
         transient_codes = (429, 502, 503, 504)
 
         async def _call_once():
-            # 如你的客户端没设默认温度，可在 request_kwargs 传；否则留空
-            return await assistant.run(
-                task=user_text,
-            )
+            assistant, model_client = self._create_assistant(character)
+            try:
+                return await assistant.run(task=user_text)
+            finally:
+                await self._close_model_client(model_client)
 
         def _is_transient(exc: Exception) -> bool:
             # 兼容不同异常形态做“弱判定”
@@ -132,7 +127,8 @@ class AgentManager:
         for attempt in range(1, max_attempts + 1):
             try:
                 # ① 单次调用加超时，避免卡住事件循环
-                result = await asyncio.wait_for(_call_once(), timeout=per_req_timeout)
+                async with self._dialogue_semaphore:
+                    result = await asyncio.wait_for(_call_once(), timeout=per_req_timeout)
 
                 # ② 解析消息：从后往前找可展示文本
                 msgs = getattr(result, "messages", None) or []

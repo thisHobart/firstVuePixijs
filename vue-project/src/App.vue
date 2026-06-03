@@ -27,6 +27,7 @@
           v-for="choice in currentNode.choices"
           :key="choice.id"
           type="button"
+          :disabled="dialogueLoading"
           @click="chooseStoryOption(choice)"
         >
           {{ choice.text }}
@@ -36,6 +37,7 @@
         v-if="canContinueStory"
         type="button"
         class="story-next-button"
+        :disabled="dialogueLoading"
         @click="continueStory"
       >
         继续
@@ -67,10 +69,15 @@
         <input
           v-model="playerInput"
           @keyup.enter="sendPlayerInput"
-          placeholder="你说……"
-          :disabled="Boolean(pendingSuggestedNextNode)"
+          :placeholder="dialogueLoading ? '对方正在回应……' : '你说……'"
+          :disabled="Boolean(pendingSuggestedNextNode) || dialogueLoading"
         />
-        <button @click="sendPlayerInput" :disabled="Boolean(pendingSuggestedNextNode)">发送</button>
+        <button
+          @click="sendPlayerInput"
+          :disabled="Boolean(pendingSuggestedNextNode) || dialogueLoading"
+        >
+          {{ dialogueLoading ? '等待中...' : '发送' }}
+        </button>
         <button @click="toggleHistory" class="history-button">历史</button>
       </div>
     </div>
@@ -135,16 +142,26 @@ const playerInput = ref('');
 const conversationHistory = ref([]);
 const displayedStoryNodeIds = ref(new Set());
 const showHistory = ref(false);
+const dialogueLoading = ref(false);
 
 // Authentication state
 const currentUser = ref(null);
+const authToken = ref(null);
 const authMode = ref('login');
 const authForm = ref({ username: '', password: '' });
 const authError = ref('');
 const authLoading = ref(false);
 
-const isAuthenticated = computed(() => Boolean(currentUser.value));
+const isAuthenticated = computed(() => Boolean(currentUser.value && authToken.value));
 const authTitle = computed(() => (authMode.value === 'login' ? '登录' : '注册'));
+
+const authHeaders = (headers = {}) => {
+  if (!authToken.value) return headers;
+  return {
+    ...headers,
+    Authorization: `Bearer ${authToken.value}`,
+  };
+};
 
 const getCharacterName = (id) => {
   const character = characterPresets.find(c => c.id === id);
@@ -246,7 +263,12 @@ const submitAuth = async () => {
         (payload && (payload.detail || payload.message)) || '请求失败，请稍后重试';
       return;
     }
-    currentUser.value = (payload && payload.username) || username;
+    if (!payload?.access_token) {
+      authError.value = '登录响应缺少令牌，请稍后重试';
+      return;
+    }
+    authToken.value = payload.access_token;
+    currentUser.value = payload.username || username;
     authForm.value.password = '';
     resetConversationState();
     appendStoryNodeToHistory(currentNode.value);
@@ -260,6 +282,7 @@ const submitAuth = async () => {
 
 const logout = () => {
   currentUser.value = null;
+  authToken.value = null;
   authMode.value = 'login';
   authError.value = '';
   authForm.value.username = '';
@@ -291,7 +314,7 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
 
     const response = await fetch('/api/dialogue', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         character: character,
         history: backendHistory,
@@ -299,6 +322,10 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
       }),
     });
 
+    if (response.status === 401) {
+      logout();
+      throw new Error('登录已失效，请重新登录');
+    }
     if (!response.ok) throw new Error(`网络响应错误: ${response.statusText}`);
 
     const cloned = response.clone();
@@ -414,6 +441,7 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
 
 const startConversation = async (characterId) => {
   if (!isAuthenticated.value) return;
+  if (dialogueLoading.value) return;
   if (characterId === 'player') return;
   const storyClick = handleStoryCharacterClick(characterId);
   if (!storyClick.allowed) {
@@ -431,19 +459,25 @@ const startConversation = async (characterId) => {
 
 const sendPlayerInput = async () => {
   if (!isAuthenticated.value) return;
+  if (dialogueLoading.value) return;
   if (pendingSuggestedNextNode.value) return;
   const trimmedInput = playerInput.value.trim();
   if (trimmedInput === '' || !activeConversation.value) return;
 
+  dialogueLoading.value = true;
   conversationHistory.value.push({ role: 'player', content: trimmedInput });
   appendSceneTurn('player', trimmedInput);
 
-  const speakingOrder = decideSpeakingOrder(activeConversation.value);
-  for (const speaker of speakingOrder) {
-    const transition = await fetchDialogueNode(speaker, speakingOrder);
-    if (transition?.applied) break;
+  try {
+    const speakingOrder = decideSpeakingOrder(activeConversation.value);
+    for (const speaker of speakingOrder) {
+      const transition = await fetchDialogueNode(speaker, speakingOrder);
+      if (transition?.applied) break;
+    }
+  } finally {
+    dialogueLoading.value = false;
+    playerInput.value = '';
   }
-  playerInput.value = '';
 };
 
 const endConversation = () => {
@@ -457,6 +491,17 @@ watch(currentUser, (value) => {
       window.localStorage.setItem("authUsername", value);
     } else {
       window.localStorage.removeItem("authUsername");
+    }
+  } catch (_) {}
+});
+
+watch(authToken, (value) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) {
+      window.localStorage.setItem("authToken", value);
+    } else {
+      window.localStorage.removeItem("authToken");
     }
   } catch (_) {}
 });
@@ -517,12 +562,20 @@ const updateCharacterFocus = () => {
   });
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (typeof window !== "undefined") {
     try {
       const savedUser = window.localStorage.getItem("authUsername");
-      if (savedUser) {
+      const savedToken = window.localStorage.getItem("authToken");
+      if (savedUser && savedToken) {
+        authToken.value = savedToken;
         currentUser.value = savedUser;
+        const response = await fetch('/api/auth/profile', {
+          headers: authHeaders(),
+        });
+        if (!response.ok) {
+          logout();
+        }
       }
     } catch (_) {}
   }
