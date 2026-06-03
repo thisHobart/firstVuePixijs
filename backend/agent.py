@@ -93,6 +93,19 @@ class AgentManager:
         )
         return assistant, model_client
 
+    def _create_custom_assistant(
+        self,
+        name: str,
+        system_message: str,
+    ) -> tuple[AssistantAgent, Any]:
+        model_client = _create_model_client()
+        assistant = AssistantAgent(
+            name=name,
+            model_client=model_client,
+            system_message=system_message,
+        )
+        return assistant, model_client
+
     async def _close_model_client(self, model_client: Any) -> None:
         close = getattr(model_client, "close", None)
         if not callable(close):
@@ -159,6 +172,41 @@ class AgentManager:
         # 你可以在这里记录日志/上报监控
         print(f"[chat_once] failed after {max_attempts} attempts: {last_error!r}")
         return "（当前对话服务繁忙，请稍后再试）"
+
+    async def judge_affection_once(self, task: str) -> str:
+        per_req_timeout = 120
+        system_message = (
+            "你是《宫廷风云》的好感度裁判Agent。"
+            "你不生成剧情台词，只根据本轮玩家发言、NPC回复、案件状态和四名NPC目标/恐惧，"
+            "判断 emperor、minister、maid、eunuch 四人的好感度变化。"
+            "普通变化必须在-3到3；只有玩家提供关键证据、严重冒犯、直接威胁或重大破绽时才允许-5到5。"
+            "评分必须考虑同场景公开影响：四名NPC都在乾清宫内，都会听见公开对话。"
+            "输出必须是JSON，不要输出解释文本。格式："
+            '{"favorabilityChanges":{"emperor":0,"minister":0,"maid":0,"eunuch":0},'
+            '"reasons":{"emperor":"...","minister":"...","maid":"...","eunuch":"..."}}'
+        )
+
+        async def _call_once():
+            assistant, model_client = self._create_custom_assistant(
+                "affection_judge",
+                system_message,
+            )
+            try:
+                return await assistant.run(task=task)
+            finally:
+                await self._close_model_client(model_client)
+
+        try:
+            async with self._dialogue_semaphore:
+                result = await asyncio.wait_for(_call_once(), timeout=per_req_timeout)
+            msgs = getattr(result, "messages", None) or []
+            for m in reversed(msgs):
+                content = getattr(m, "content", None)
+                if isinstance(content, str) and content.strip():
+                    return content[:-9].rstrip() if content.rstrip().endswith("TERMINATE") else content
+        except Exception as exc:
+            print(f"[judge_affection_once] failed: {exc!r}")
+        return '{"favorabilityChanges":{"emperor":0,"minister":0,"maid":0,"eunuch":0},"reasons":{}}'
 
 
 
@@ -271,6 +319,18 @@ def _normalize_favorability_change(value: Any) -> int:
     return max(-5, min(5, delta))
 
 
+def _normalize_affection_changes(value: Any) -> Dict[str, int]:
+    changes = value if isinstance(value, dict) else {}
+    normalized: Dict[str, int] = {}
+    for character in ("emperor", "minister", "maid", "eunuch"):
+        try:
+            delta = int(changes.get(character, 0))
+        except (TypeError, ValueError):
+            delta = 0
+        normalized[character] = max(-5, min(5, delta))
+    return normalized
+
+
 def _normalize_next_node(value: Any, story_context: Dict[str, Any] | None) -> str:
     if not isinstance(value, str) or not value or value == "end":
         return "end"
@@ -289,23 +349,60 @@ def _normalize_next_node(value: Any, story_context: Dict[str, Any] | None) -> st
     return value
 
 
+def _build_affection_judge_task(
+    player_text: str,
+    character: str,
+    responses: List[Dict[str, Any]],
+    story_context: Dict[str, Any] | None,
+) -> str:
+    story_context = story_context or {}
+    compact_context = {
+        "targetCharacter": character,
+        "speakingOrder": story_context.get("speakingOrder") or [],
+        "currentStage": story_context.get("currentStage") or {},
+        "caseTruth": story_context.get("caseTruth") or {},
+        "evidenceChain": story_context.get("evidenceChain") or {},
+        "npcProfiles": story_context.get("npcProfiles") or {},
+        "interrogationState": story_context.get("interrogationState") or {},
+        "sceneMemory": story_context.get("sceneMemory") or {},
+        "npcMemory": story_context.get("npcMemory") or {},
+    }
+    return (
+        "请评估本轮公开对话对四名NPC好感度的影响。\n"
+        f"玩家本轮发言：{player_text}\n"
+        f"当前被审问对象：{character}\n"
+        f"本轮NPC回复：{json.dumps(responses, ensure_ascii=False)}\n"
+        f"剧情上下文：{json.dumps(compact_context, ensure_ascii=False)}\n"
+        "评分规则：普通变化-3到3；关键证据、严重冒犯、直接威胁、重大破绽允许-5到5。"
+        "皇帝重证据链、冷静、忠诚和朝局稳定；"
+        "张廷玉讨厌被抓住副账、皇子府门人、边军粮草等软肋，但尊重严密证据；"
+        "苏麻喇姑重克制、礼法、忠诚和不莽撞牵连皇子；"
+        "李德全重谨慎、保护证人、不强迫其直接指认皇子。"
+    )
+
+
 async def generate_dialogue(
     character: str,
     conversation_history: list,
     story_context: Dict[str, Any] | None = None,
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """单 Agent 一问一答：拿文本→优先解析 JSON→兜底文本"""
     try:
         # 1) 取用户的最后一句作为本轮输入
         last_message = (conversation_history[-1]["content"].strip()
                         if conversation_history and "content" in conversation_history[-1] else "")
         if not last_message:
-            return [{
+            fallback = [{
                 "speaker": character,
                 "text": "（没有可用的输入）",
                 "nextNode": "end",
                 "favorabilityChange": 0
             }]
+            return {
+                "messages": fallback,
+                "favorabilityChanges": _normalize_affection_changes({}),
+                "favorabilityReasons": {},
+            }
 
         # 2) 调用新版 Autogen（封装在 AgentManager.chat_once 内）
         #    这里返回的是“模型最终可展示的文本”
@@ -372,14 +469,40 @@ async def generate_dialogue(
         except Exception:
             pass
 
-        return responses
+        judge_task = _build_affection_judge_task(
+            last_message,
+            character,
+            responses,
+            story_context,
+        )
+        judge_text = await agent_manager.judge_affection_once(judge_task)
+        try:
+            judge_data = _extract_json_from_text(judge_text)
+        except json.JSONDecodeError:
+            judge_data = {}
+        if not isinstance(judge_data, dict):
+            judge_data = {}
+
+        return {
+            "messages": responses,
+            "favorabilityChanges": _normalize_affection_changes(
+                judge_data.get("favorabilityChanges")
+            ),
+            "favorabilityReasons": judge_data.get("reasons")
+            if isinstance(judge_data.get("reasons"), dict)
+            else {},
+        }
 
     except Exception as e:
         import traceback
         print(traceback.format_exc())
-        return [{
+        return {
+            "messages": [{
             "speaker": "system",
             "text": f"抱歉，调用AI时出现错误: {e}",
             "nextNode": "end",
             "favorabilityChange": 0,
-        }]
+            }],
+            "favorabilityChanges": _normalize_affection_changes({}),
+            "favorabilityReasons": {},
+        }

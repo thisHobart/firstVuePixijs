@@ -243,6 +243,19 @@ const resetConversationState = () => {
   displayedStoryNodeIds.value = new Set();
 };
 
+const applyFavorabilityChanges = (changes = {}) => {
+  Object.entries(changes).forEach(([characterId, rawDelta]) => {
+    const target = characterStates.value[characterId];
+    if (!target) return;
+    const delta = Number.isFinite(Number(rawDelta))
+      ? Math.max(-5, Math.min(5, Math.trunc(Number(rawDelta))))
+      : 0;
+    if (delta !== 0) {
+      target.favorability += delta;
+    }
+  });
+};
+
 const appendStoryNodeToHistory = (node, options = {}) => {
   if (!node?.nodeId || !node.text) return;
   const includeClickNpc = Boolean(options.includeClickNpc);
@@ -364,6 +377,10 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
       : Array.isArray(data?.messages)
         ? data.messages
         : [];
+    const favorabilityChanges =
+      !Array.isArray(data) && typeof data?.favorabilityChanges === 'object' && data.favorabilityChanges
+        ? data.favorabilityChanges
+        : null;
 
     if (!Array.isArray(messages) || messages.length === 0) {
       console.warn('后端响应为空或格式不符合预期:', data);
@@ -438,16 +455,16 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
       return;
     }
 
+    if (favorabilityChanges) {
+      applyFavorabilityChanges(favorabilityChanges);
+    }
+
     for (const message of normalizedMessages) {
       conversationHistory.value.push({
         role: message.role,
         content: message.content
       });
 
-      const favorabilityTarget = characterStates.value[character];
-      if (favorabilityTarget && message.favorabilityChange !== 0) {
-        favorabilityTarget.favorability += message.favorabilityChange;
-      }
       applyAgentResult(character, message);
       const transition = applySuggestedNextNode(message.nextNode);
       if (transition.applied) return transition;

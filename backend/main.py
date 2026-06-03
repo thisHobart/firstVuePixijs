@@ -94,7 +94,7 @@ class DialogueRequest(BaseModel):
     )
 
 
-@app.post("/api/dialogue", response_model=List[Dict[str, Any]])
+@app.post("/api/dialogue", response_model=Dict[str, Any])
 async def dialogue(
     request: DialogueRequest,
     current_user: AuthResult = Depends(get_current_user),
