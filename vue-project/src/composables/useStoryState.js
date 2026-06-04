@@ -96,6 +96,10 @@ export function useStoryState(getCharacterName, options = {}) {
   const isFreeInteraction = computed(() => currentNode.value?.type === 'free_interaction');
   const normalizeEvidenceId = (evidenceId) => evidenceAliases[evidenceId] || evidenceId;
   const normalizeFlagId = (flagId) => flagAliases[flagId] || flagId;
+  const getFavorability =
+    typeof options.getCharacterFavorability === 'function'
+      ? options.getCharacterFavorability
+      : () => 50;
   const hasEvidence = (evidenceId) => Boolean(sceneMemory.value.evidence[normalizeEvidenceId(evidenceId)]);
   const markEvidence = (evidenceId) => {
     evidenceId = normalizeEvidenceId(evidenceId);
@@ -116,17 +120,32 @@ export function useStoryState(getCharacterName, options = {}) {
   const updateStoryStage = () => {
     const visitedCount = storyState.value.interrogation.visitedCharacters.length;
     const flags = sceneMemory.value.flags;
-    if (
-      hasEvidence('borderArmyLink') ||
-      (hasEvidence('handwritingHint') &&
-        hasEvidence('palaceEntryRecord') &&
-        hasEvidence('ledgerClue') &&
-        flags.ministerContradictionFound)
-    ) {
+    const hasCoreEvidenceChain =
+      hasEvidence('bloodLetter') &&
+      hasEvidence('handwritingHint') &&
+      hasEvidence('palaceEntryRecord') &&
+      hasEvidence('ledgerClue') &&
+      hasEvidence('borderArmyLink');
+    const hasSupportFromAllies =
+      getFavorability('emperor') >= 60 &&
+      (
+        getFavorability('maid') >= 55 ||
+        hasEvidence('handwritingHint')
+      ) &&
+      (
+        getFavorability('eunuch') >= 60 ||
+        hasEvidence('palaceEntryRecord')
+      );
+    const hasVillainExposed =
+      flags.ministerContradictionFound &&
+      getFavorability('minister') <= 35;
+    const hasCourtConfrontation = visitedCount >= 3;
+    if (hasSupportFromAllies && hasVillainExposed && hasCoreEvidenceChain && hasCourtConfrontation) {
       storyState.value.currentStageId = 'stage_5';
       markFlag('finalJudgementReady', true);
       return;
     }
+    markFlag('finalJudgementReady', false);
     if (hasEvidence('ledgerClue') && hasEvidence('palaceEntryRecord') && flags.ministerContradictionFound) {
       storyState.value.currentStageId = 'stage_4';
       return;
@@ -273,10 +292,6 @@ export function useStoryState(getCharacterName, options = {}) {
   const decideSpeakingOrder = (targetCharacter) => {
     if (!isFreeInteraction.value) return [targetCharacter];
     const flags = sceneMemory.value.flags;
-    const getFavorability =
-      typeof options.getCharacterFavorability === 'function'
-        ? options.getCharacterFavorability
-        : () => 50;
     const order = [targetCharacter];
     const turns = storyState.value.interrogation.turnCounts;
 
@@ -343,6 +358,7 @@ export function useStoryState(getCharacterName, options = {}) {
 
     if (
       speaker === 'maid' &&
+      getFavorability('maid') >= 60 &&
       textIncludesAny(text, ['笔迹', '纸料', '旧日', '内侍', '江南的内侍', '不像临时伪造'])
     ) {
       markFlagChange('maidHandwritingHint');
@@ -351,6 +367,7 @@ export function useStoryState(getCharacterName, options = {}) {
 
     if (
       speaker === 'eunuch' &&
+      getFavorability('eunuch') >= 60 &&
       textIncludesAny(text, ['入宫', '乾清宫外', '偏门', '门人', '出入', '动过', '血书被'])
     ) {
       markFlagChange('eunuchEntryRecord');
@@ -359,6 +376,7 @@ export function useStoryState(getCharacterName, options = {}) {
 
     if (
       speaker === 'minister' &&
+      getFavorability('minister') <= 40 &&
       textIncludesAny(text, ['户部', '副账', '账册', '银两', '压下', '粮草'])
     ) {
       markFlagChange('ministerLedgerSuppressed');
@@ -367,13 +385,20 @@ export function useStoryState(getCharacterName, options = {}) {
 
     if (
       speaker === 'minister' &&
+      getFavorability('minister') <= 45 &&
       textIncludesAny(text, ['臣为大局', '大局', '老臣确曾', '确曾', '压下'])
     ) {
       markFlagChange('ministerContradictionFound');
     }
 
     if (
+      ['minister', 'emperor'].includes(speaker) &&
+      storyState.value.currentStageId === 'stage_4' &&
+      getFavorability('minister') <= 35 &&
+      getFavorability('emperor') >= 60 &&
       hasEvidence('ledgerClue') &&
+      hasEvidence('palaceEntryRecord') &&
+      sceneMemory.value.flags.ministerContradictionFound &&
       textIncludesAny(text, ['边军', '边疆', '粮草', '大将', '军中'])
     ) {
       markEvidenceChange('borderArmyLink');

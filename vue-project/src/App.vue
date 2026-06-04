@@ -247,7 +247,7 @@ const applyFavorabilityChanges = (changes = {}) => {
     const target = characterStates.value[characterId];
     if (!target) return;
     const delta = Number.isFinite(Number(rawDelta))
-      ? Math.max(-5, Math.min(5, Math.trunc(Number(rawDelta))))
+      ? Math.max(-10, Math.min(10, Math.trunc(Number(rawDelta))))
       : 0;
     if (delta !== 0) {
       target.favorability += delta;
