@@ -18,6 +18,31 @@
 
     <h1>古代互动小说：宫廷风云</h1>
     <h2>场景：金銮殿</h2>
+    <section class="intro-panel">
+      <h3>{{ currentNode.title }}</h3>
+      <p>{{ storyPanelText }}</p>
+      <p v-if="storyNotice" class="story-notice">{{ storyNotice }}</p>
+      <div v-if="currentNode.type === 'player_input'" class="story-choice-list">
+        <button
+          v-for="choice in currentNode.choices"
+          :key="choice.id"
+          type="button"
+          :disabled="dialogueLoading"
+          @click="chooseStoryOption(choice)"
+        >
+          {{ choice.text }}
+        </button>
+      </div>
+      <button
+        v-if="canContinueStory"
+        type="button"
+        class="story-next-button"
+        :disabled="dialogueLoading"
+        @click="continueStory"
+      >
+        继续
+      </button>
+    </section>
     <div ref="pixiCanvasContainer" class="canvas-container"></div>
 
     <!-- Dialogue History Log -->
@@ -40,14 +65,37 @@
         <p class="dialogue-text">{{ lastMessage.content }}</p>
       </div>
 
+      <div v-if="availableConversationCharacters.length > 1" class="speaker-switcher">
+        <button
+          v-for="characterId in availableConversationCharacters"
+          :key="characterId"
+          type="button"
+          :class="{ active: activeConversation === characterId }"
+          :disabled="dialogueLoading || Boolean(pendingStoryNode)"
+          @click="startConversation(characterId)"
+        >
+          {{ getCharacterName(characterId) }}
+        </button>
+      </div>
+
       <div class="input-container">
-        <input v-model="playerInput" @keyup.enter="sendPlayerInput" placeholder="你说……" />
-        <button @click="sendPlayerInput">发送</button>
+        <input
+          v-model="playerInput"
+          @keyup.enter="sendPlayerInput"
+          :placeholder="dialogueLoading ? '对方正在回应……' : '你说……'"
+          :disabled="Boolean(pendingStoryNode) || dialogueLoading"
+        />
+        <button
+          @click="sendPlayerInput"
+          :disabled="Boolean(pendingStoryNode) || dialogueLoading"
+        >
+          {{ dialogueLoading ? '等待中...' : '发送' }}
+        </button>
         <button @click="toggleHistory" class="history-button">历史</button>
       </div>
     </div>
     <div v-else class="dialogue-box-placeholder">
-      <p>点击NPC开始对话</p>
+      <p>{{ dialoguePlaceholderText }}</p>
     </div>
 
     <div v-if="!isAuthenticated" class="auth-overlay">
@@ -94,31 +142,79 @@
 import * as PIXI from 'pixi.js';
 import { onMounted, ref, computed, nextTick, watch } from 'vue';
 import { characterPresets } from './assets/characterPresets';
+import { useStoryState } from './composables/useStoryState';
 
 const pixiCanvasContainer = ref(null);
 const pixiApp = ref(null);
 const characterStates = ref({});
+const characterSprites = ref({});
 
 // Dialogue state
 const activeConversation = ref(null);
 const playerInput = ref('');
 const conversationHistory = ref([]);
+const displayedStoryNodeIds = ref(new Set());
 const showHistory = ref(false);
+const dialogueLoading = ref(false);
 
 // Authentication state
 const currentUser = ref(null);
+const authToken = ref(null);
 const authMode = ref('login');
 const authForm = ref({ username: '', password: '' });
 const authError = ref('');
 const authLoading = ref(false);
 
-const isAuthenticated = computed(() => Boolean(currentUser.value));
+const isAuthenticated = computed(() => Boolean(currentUser.value && authToken.value));
 const authTitle = computed(() => (authMode.value === 'login' ? '登录' : '注册'));
+
+const authHeaders = (headers = {}) => {
+  if (!authToken.value) return headers;
+  return {
+    ...headers,
+    Authorization: `Bearer ${authToken.value}`,
+  };
+};
 
 const getCharacterName = (id) => {
   const character = characterPresets.find(c => c.id === id);
   return character ? character.name : '';
 };
+
+const clearActiveConversationState = () => {
+  activeConversation.value = null;
+  playerInput.value = '';
+  showHistory.value = false;
+};
+
+const {
+  storyState,
+  storyNotice,
+  currentNode,
+  getStoryContext,
+  storyPanelText,
+  canContinueStory,
+  dialoguePlaceholderText,
+  pendingStoryNode,
+  continueStory,
+  chooseStoryOption,
+  appendSceneTurn,
+  decideSpeakingOrder,
+  applyAgentResult,
+  handleStoryCharacterClick,
+} = useStoryState(getCharacterName, {
+  getCharacterFavorability: (characterId) => characterStates.value[characterId]?.favorability ?? 50,
+  onStoryAdvanced: clearActiveConversationState,
+  onStoryChoice: (choice) => {
+    conversationHistory.value.push({ role: 'player', content: choice.text });
+  },
+});
+
+const availableConversationCharacters = computed(() => {
+  const node = currentNode.value;
+  if (node?.type !== 'free_interaction') return [];
+  return (node.availableCharacters || []).filter((characterId) => characterId !== 'player');
+});
 
 const getSpeakerName = (role) => {
   if (role === 'system') return '系统提示';
@@ -141,10 +237,34 @@ const toggleAuthMode = () => {
 };
 
 const resetConversationState = () => {
-  activeConversation.value = null;
+  clearActiveConversationState();
   conversationHistory.value = [];
-  playerInput.value = '';
-  showHistory.value = false;
+  displayedStoryNodeIds.value = new Set();
+};
+
+const applyFavorabilityChanges = (changes = {}) => {
+  Object.entries(changes).forEach(([characterId, rawDelta]) => {
+    const target = characterStates.value[characterId];
+    if (!target) return;
+    const delta = Number.isFinite(Number(rawDelta))
+      ? Math.max(-5, Math.min(5, Math.trunc(Number(rawDelta))))
+      : 0;
+    if (delta !== 0) {
+      target.favorability += delta;
+    }
+  });
+};
+
+const appendStoryNodeToHistory = (node, options = {}) => {
+  if (!node?.nodeId || !node.text) return;
+  const includeClickNpc = Boolean(options.includeClickNpc);
+  if (node.type === 'click_npc' && !includeClickNpc) return;
+  if (displayedStoryNodeIds.value.has(node.nodeId)) return;
+
+  displayedStoryNodeIds.value.add(node.nodeId);
+  const role = node.speaker && node.speaker !== 'system' ? node.speaker : 'system';
+  conversationHistory.value.push({ role, content: node.text });
+  appendSceneTurn(role, node.text);
 };
 
 const submitAuth = async () => {
@@ -171,13 +291,23 @@ const submitAuth = async () => {
       payload = null;
     }
     if (!response.ok) {
+      if (authMode.value === 'register' && response.status === 409) {
+        authError.value = '用户名已经存在，请换一个用户名';
+        return;
+      }
       authError.value =
         (payload && (payload.detail || payload.message)) || '请求失败，请稍后重试';
       return;
     }
-    currentUser.value = (payload && payload.username) || username;
+    if (!payload?.access_token) {
+      authError.value = '登录响应缺少令牌，请稍后重试';
+      return;
+    }
+    authToken.value = payload.access_token;
+    currentUser.value = payload.username || username;
     authForm.value.password = '';
     resetConversationState();
+    appendStoryNodeToHistory(currentNode.value);
   } catch (error) {
     console.error('auth request failed', error);
     authError.value = '无法连接服务器，请稍后重试';
@@ -188,6 +318,7 @@ const submitAuth = async () => {
 
 const logout = () => {
   currentUser.value = null;
+  authToken.value = null;
   authMode.value = 'login';
   authError.value = '';
   authForm.value.username = '';
@@ -195,7 +326,19 @@ const logout = () => {
   resetConversationState();
 };
 
-const fetchDialogueNode = async (character) => {
+const markLatestPlayerMessageBlocked = () => {
+  for (let index = conversationHistory.value.length - 1; index >= 0; index -= 1) {
+    if (conversationHistory.value[index]?.role === 'player') {
+      conversationHistory.value[index] = {
+        ...conversationHistory.value[index],
+        blocked: true,
+      };
+      return;
+    }
+  }
+};
+
+const fetchDialogueNode = async (character, speakingOrder = [], playerTurnToRecord = '') => {
   if (!isAuthenticated.value) return;
   if (conversationHistory.value.length === 0) return;
 
@@ -206,7 +349,7 @@ const fetchDialogueNode = async (character) => {
   try {
     // Construct history for backend, ensuring roles are 'user' or 'assistant'
     const backendHistory = conversationHistory.value
-      .filter(msg => msg.role !== 'system')
+      .filter(msg => msg.role !== 'system' && !msg.blocked)
       .map(msg => ({
         role: msg.role === 'player' ? 'user' : 'assistant',
         content: msg.content
@@ -219,13 +362,18 @@ const fetchDialogueNode = async (character) => {
 
     const response = await fetch('/api/dialogue', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         character: character,
-        history: backendHistory
+        history: backendHistory,
+        storyContext: getStoryContext(character, speakingOrder),
       }),
     });
 
+    if (response.status === 401) {
+      logout();
+      throw new Error('登录已失效，请重新登录');
+    }
     if (!response.ok) throw new Error(`网络响应错误: ${response.statusText}`);
 
     const cloned = response.clone();
@@ -240,6 +388,27 @@ const fetchDialogueNode = async (character) => {
       : Array.isArray(data?.messages)
         ? data.messages
         : [];
+    const inputGuard =
+      !Array.isArray(data) && typeof data?.inputGuard === 'object' && data.inputGuard
+        ? data.inputGuard
+        : null;
+    const favorabilityChanges =
+      !Array.isArray(data) && typeof data?.favorabilityChanges === 'object' && data.favorabilityChanges
+        ? data.favorabilityChanges
+        : null;
+
+    if (inputGuard?.allowed === false) {
+      const guardMessage =
+        typeof inputGuard.systemMessage === 'string' && inputGuard.systemMessage.trim()
+          ? inputGuard.systemMessage.trim()
+          : '当前输入无法进入剧情，请重新输入。';
+      conversationHistory.value.push({
+        role: 'system',
+        content: guardMessage
+      });
+      markLatestPlayerMessageBlocked();
+      return { applied: false, blocked: true };
+    }
 
     if (!Array.isArray(messages) || messages.length === 0) {
       console.warn('后端响应为空或格式不符合预期:', data);
@@ -278,15 +447,9 @@ const fetchDialogueNode = async (character) => {
             ? character
             : backendRole;
 
-        const favorabilityDelta =
-          typeof message?.favorabilityChange === 'number'
-            ? message.favorabilityChange
-            : 0;
-
         return {
           role: resolvedRole,
           content: rawContent,
-          favorabilityChange: favorabilityDelta,
         };
       })
       .filter(Boolean);
@@ -300,43 +463,76 @@ const fetchDialogueNode = async (character) => {
       return;
     }
 
+    if (playerTurnToRecord) {
+      appendSceneTurn('player', playerTurnToRecord);
+    }
+
+    if (favorabilityChanges) {
+      applyFavorabilityChanges(favorabilityChanges);
+    }
+
     for (const message of normalizedMessages) {
       conversationHistory.value.push({
         role: message.role,
         content: message.content
       });
 
-      const favorabilityTarget = characterStates.value[character];
-      if (favorabilityTarget && message.favorabilityChange !== 0) {
-        favorabilityTarget.favorability += message.favorabilityChange;
-      }
+      const transition = applyAgentResult(character, message);
+      if (transition.applied) return transition;
     }
+    return { applied: false };
   } catch (error) {
     console.error('Fetch操作出现问题:', error);
     conversationHistory.value.push({
       role: 'system',
       content: `无法连接到服务器: ${error.message}`
     });
+    return { applied: false };
   }
 };
 
 const startConversation = async (characterId) => {
   if (!isAuthenticated.value) return;
-  if (characterId === 'player' || activeConversation.value) return;
+  if (dialogueLoading.value) return;
+  if (characterId === 'player') return;
+  const storyClick = handleStoryCharacterClick(characterId);
+  if (!storyClick.allowed) {
+    return;
+  }
+  if (storyClick.mode === 'story_dialogue') {
+    appendStoryNodeToHistory(currentNode.value, { includeClickNpc: true });
+    return;
+  }
+  if (activeConversation.value === characterId) return;
   activeConversation.value = characterId;
-  conversationHistory.value = [{ role: 'player', content: '你好' }];
-  await fetchDialogueNode(characterId);
+  playerInput.value = '';
+  showHistory.value = false;
 };
 
 const sendPlayerInput = async () => {
   if (!isAuthenticated.value) return;
+  if (dialogueLoading.value) return;
+  if (pendingStoryNode.value) return;
   const trimmedInput = playerInput.value.trim();
   if (trimmedInput === '' || !activeConversation.value) return;
 
+  dialogueLoading.value = true;
   conversationHistory.value.push({ role: 'player', content: trimmedInput });
 
-  await fetchDialogueNode(activeConversation.value);
-  playerInput.value = '';
+  try {
+    const speakingOrder = decideSpeakingOrder(activeConversation.value);
+    for (const [index, speaker] of speakingOrder.entries()) {
+      const transition = await fetchDialogueNode(
+        speaker,
+        speakingOrder,
+        index === 0 ? trimmedInput : ''
+      );
+      if (transition?.applied || transition?.blocked) break;
+    }
+  } finally {
+    dialogueLoading.value = false;
+    playerInput.value = '';
+  }
 };
 
 const endConversation = () => {
@@ -354,6 +550,25 @@ watch(currentUser, (value) => {
   } catch (_) {}
 });
 
+watch(authToken, (value) => {
+  if (typeof window === "undefined") return;
+  try {
+    if (value) {
+      window.localStorage.setItem("authToken", value);
+    } else {
+      window.localStorage.removeItem("authToken");
+    }
+  } catch (_) {}
+});
+
+watch(
+  () => storyState.value.currentNodeId,
+  () => {
+    appendStoryNodeToHistory(currentNode.value);
+    updateCharacterFocus();
+  }
+);
+
 const initPixiApp = () => {
   const container = pixiCanvasContainer.value;
   const app = new PIXI.Application({
@@ -369,6 +584,7 @@ const setupScene = () => {
   if (!pixiApp.value) return;
   const stage = pixiApp.value.stage;
   stage.removeChildren();
+  characterSprites.value = {};
 
   const positions = [
     { x: 400, y: 500 }, { x: 400, y: 150 }, { x: 200, y: 300 },
@@ -381,16 +597,40 @@ const setupScene = () => {
     sprite.interactive = true;
     sprite.buttonMode = true;
     sprite.on('pointerdown', () => startConversation(character.id));
+    characterSprites.value[character.id] = sprite;
     stage.addChild(sprite);
+  });
+  updateCharacterFocus();
+}
+
+const updateCharacterFocus = () => {
+  const node = currentNode.value;
+  Object.entries(characterSprites.value).forEach(([id, sprite]) => {
+    if (id === 'player' || !node || (!node.lockedCharacter && !node.availableCharacters?.length)) {
+      sprite.alpha = 1;
+      return;
+    }
+    const isAllowed = node.lockedCharacter
+      ? id === node.lockedCharacter
+      : node.availableCharacters.includes(id);
+    sprite.alpha = isAllowed ? 1 : 0.3;
   });
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (typeof window !== "undefined") {
     try {
       const savedUser = window.localStorage.getItem("authUsername");
-      if (savedUser) {
+      const savedToken = window.localStorage.getItem("authToken");
+      if (savedUser && savedToken) {
+        authToken.value = savedToken;
         currentUser.value = savedUser;
+        const response = await fetch('/api/auth/profile', {
+          headers: authHeaders(),
+        });
+        if (!response.ok) {
+          logout();
+        }
       }
     } catch (_) {}
   }
@@ -406,6 +646,7 @@ onMounted(() => {
 
   initPixiApp();
   setupScene();
+  appendStoryNodeToHistory(currentNode.value);
 });
 </script>
 
@@ -421,6 +662,65 @@ onMounted(() => {
 
 .canvas-container {
   display: inline-block;
+}
+
+.intro-panel {
+  width: 820px;
+  margin: 0 auto 12px;
+  padding: 12px 18px;
+  box-sizing: border-box;
+  background: rgba(255, 248, 220, 0.92);
+  border: 1px solid #c7a35a;
+  color: #3d2a16;
+  text-align: left;
+}
+
+.intro-panel h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: #6d3f12;
+}
+
+.intro-panel p {
+  margin: 0;
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+.story-notice {
+  margin-top: 8px;
+  color: #9a1f1f;
+  font-weight: 600;
+}
+
+.story-choice-list {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.story-choice-list button,
+.story-next-button {
+  padding: 8px 12px;
+  border: 1px solid #8a6530;
+  background: #6d3f12;
+  color: #fff7dd;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.story-choice-list button {
+  flex: 1;
+  text-align: left;
+}
+
+.story-choice-list button:hover,
+.story-next-button:hover {
+  background: #8b541d;
+}
+
+.story-next-button {
+  margin-top: 10px;
 }
 
 /* Dialogue Box */
@@ -464,6 +764,32 @@ onMounted(() => {
 .dialogue-text {
   margin: 0;
   white-space: pre-wrap; /* Allows text to wrap */
+}
+
+.speaker-switcher {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.speaker-switcher button {
+  padding: 6px 12px;
+  border: 1px solid #777;
+  border-radius: 5px;
+  background: #2d2d2d;
+  color: #fff;
+  cursor: pointer;
+}
+
+.speaker-switcher button.active {
+  border-color: #f0c54f;
+  background: #6d3f12;
+  color: #fff7dd;
+}
+
+.speaker-switcher button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* Input Controls */
