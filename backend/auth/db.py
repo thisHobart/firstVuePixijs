@@ -39,9 +39,10 @@ _DSN = _build_dsn()
 _CREATE_USERS_TABLE = """
 CREATE TABLE IF NOT EXISTS users (
     id            BIGSERIAL PRIMARY KEY,
-    username      TEXT NOT NULL UNIQUE,
+    username      TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT users_username_unique UNIQUE (username)
 );
 """
 
