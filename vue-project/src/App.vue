@@ -71,7 +71,7 @@
           :key="characterId"
           type="button"
           :class="{ active: activeConversation === characterId }"
-          :disabled="dialogueLoading || Boolean(pendingSuggestedNextNode)"
+          :disabled="dialogueLoading || Boolean(pendingStoryNode)"
           @click="startConversation(characterId)"
         >
           {{ getCharacterName(characterId) }}
@@ -83,11 +83,11 @@
           v-model="playerInput"
           @keyup.enter="sendPlayerInput"
           :placeholder="dialogueLoading ? '对方正在回应……' : '你说……'"
-          :disabled="Boolean(pendingSuggestedNextNode) || dialogueLoading"
+          :disabled="Boolean(pendingStoryNode) || dialogueLoading"
         />
         <button
           @click="sendPlayerInput"
-          :disabled="Boolean(pendingSuggestedNextNode) || dialogueLoading"
+          :disabled="Boolean(pendingStoryNode) || dialogueLoading"
         >
           {{ dialogueLoading ? '等待中...' : '发送' }}
         </button>
@@ -195,14 +195,13 @@ const {
   storyPanelText,
   canContinueStory,
   dialoguePlaceholderText,
-  pendingSuggestedNextNode,
+  pendingStoryNode,
   continueStory,
   chooseStoryOption,
   appendSceneTurn,
   decideSpeakingOrder,
   applyAgentResult,
   handleStoryCharacterClick,
-  applySuggestedNextNode,
 } = useStoryState(getCharacterName, {
   getCharacterFavorability: (characterId) => characterStates.value[characterId]?.favorability ?? 50,
   onStoryAdvanced: clearActiveConversationState,
@@ -327,7 +326,19 @@ const logout = () => {
   resetConversationState();
 };
 
-const fetchDialogueNode = async (character, speakingOrder = []) => {
+const markLatestPlayerMessageBlocked = () => {
+  for (let index = conversationHistory.value.length - 1; index >= 0; index -= 1) {
+    if (conversationHistory.value[index]?.role === 'player') {
+      conversationHistory.value[index] = {
+        ...conversationHistory.value[index],
+        blocked: true,
+      };
+      return;
+    }
+  }
+};
+
+const fetchDialogueNode = async (character, speakingOrder = [], playerTurnToRecord = '') => {
   if (!isAuthenticated.value) return;
   if (conversationHistory.value.length === 0) return;
 
@@ -338,7 +349,7 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
   try {
     // Construct history for backend, ensuring roles are 'user' or 'assistant'
     const backendHistory = conversationHistory.value
-      .filter(msg => msg.role !== 'system')
+      .filter(msg => msg.role !== 'system' && !msg.blocked)
       .map(msg => ({
         role: msg.role === 'player' ? 'user' : 'assistant',
         content: msg.content
@@ -377,10 +388,27 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
       : Array.isArray(data?.messages)
         ? data.messages
         : [];
+    const inputGuard =
+      !Array.isArray(data) && typeof data?.inputGuard === 'object' && data.inputGuard
+        ? data.inputGuard
+        : null;
     const favorabilityChanges =
       !Array.isArray(data) && typeof data?.favorabilityChanges === 'object' && data.favorabilityChanges
         ? data.favorabilityChanges
         : null;
+
+    if (inputGuard?.allowed === false) {
+      const guardMessage =
+        typeof inputGuard.systemMessage === 'string' && inputGuard.systemMessage.trim()
+          ? inputGuard.systemMessage.trim()
+          : '当前输入无法进入剧情，请重新输入。';
+      conversationHistory.value.push({
+        role: 'system',
+        content: guardMessage
+      });
+      markLatestPlayerMessageBlocked();
+      return { applied: false, blocked: true };
+    }
 
     if (!Array.isArray(messages) || messages.length === 0) {
       console.warn('后端响应为空或格式不符合预期:', data);
@@ -419,29 +447,9 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
             ? character
             : backendRole;
 
-        const favorabilityDelta =
-          typeof message?.favorabilityChange === 'number'
-            ? Math.max(-5, Math.min(5, Math.trunc(message.favorabilityChange)))
-            : 0;
-        const suggestedNextNode =
-          typeof message?.nextNode === 'string'
-            ? message.nextNode
-            : 'end';
-        const stateUpdates =
-          typeof message?.stateUpdates === 'object' && message.stateUpdates
-            ? message.stateUpdates
-            : {};
-        const evidenceUpdates = Array.isArray(message?.evidenceUpdates)
-          ? message.evidenceUpdates
-          : [];
-
         return {
           role: resolvedRole,
           content: rawContent,
-          favorabilityChange: favorabilityDelta,
-          nextNode: suggestedNextNode,
-          stateUpdates,
-          evidenceUpdates,
         };
       })
       .filter(Boolean);
@@ -455,6 +463,10 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
       return;
     }
 
+    if (playerTurnToRecord) {
+      appendSceneTurn('player', playerTurnToRecord);
+    }
+
     if (favorabilityChanges) {
       applyFavorabilityChanges(favorabilityChanges);
     }
@@ -465,8 +477,7 @@ const fetchDialogueNode = async (character, speakingOrder = []) => {
         content: message.content
       });
 
-      applyAgentResult(character, message);
-      const transition = applySuggestedNextNode(message.nextNode);
+      const transition = applyAgentResult(character, message);
       if (transition.applied) return transition;
     }
     return { applied: false };
@@ -501,19 +512,22 @@ const startConversation = async (characterId) => {
 const sendPlayerInput = async () => {
   if (!isAuthenticated.value) return;
   if (dialogueLoading.value) return;
-  if (pendingSuggestedNextNode.value) return;
+  if (pendingStoryNode.value) return;
   const trimmedInput = playerInput.value.trim();
   if (trimmedInput === '' || !activeConversation.value) return;
 
   dialogueLoading.value = true;
   conversationHistory.value.push({ role: 'player', content: trimmedInput });
-  appendSceneTurn('player', trimmedInput);
 
   try {
     const speakingOrder = decideSpeakingOrder(activeConversation.value);
-    for (const speaker of speakingOrder) {
-      const transition = await fetchDialogueNode(speaker, speakingOrder);
-      if (transition?.applied) break;
+    for (const [index, speaker] of speakingOrder.entries()) {
+      const transition = await fetchDialogueNode(
+        speaker,
+        speakingOrder,
+        index === 0 ? trimmedInput : ''
+      );
+      if (transition?.applied || transition?.blocked) break;
     }
   } finally {
     dialogueLoading.value = false;

@@ -4,7 +4,6 @@ import {
   createInitialEvidenceState,
   createInitialInterrogationState,
   evidenceChain,
-  interruptionRules,
   npcProfiles,
   storyStages,
 } from '../assets/caseDesign';
@@ -90,7 +89,7 @@ export function useStoryState(getCharacterName, options = {}) {
   });
   const nodeDialogueVisible = ref(false);
   const storyNotice = ref('');
-  const pendingSuggestedNextNode = ref(null);
+  const pendingStoryNode = ref(null);
 
   const currentNode = computed(() => storyNodes[storyState.value.currentNodeId]);
   const currentStage = computed(() => storyStages[storyState.value.currentStageId]);
@@ -152,7 +151,7 @@ export function useStoryState(getCharacterName, options = {}) {
   });
   const canContinueStory = computed(() => {
     const node = currentNode.value;
-    if (pendingSuggestedNextNode.value) return true;
+    if (pendingStoryNode.value) return true;
     if (!node || isFreeInteraction.value || node.type === 'player_input') return false;
     if (node.type === 'click_npc') return Boolean(nodeDialogueVisible.value && node.nextNodes?.length);
     return Boolean(node.autoNext);
@@ -173,22 +172,30 @@ export function useStoryState(getCharacterName, options = {}) {
       title: node.title,
       type: node.type,
       speaker: node.speaker,
-      availableNextNodes: node.nextNodes || [],
       lockedCharacter: node.lockedCharacter,
       availableCharacters: node.availableCharacters || [],
       completedNodes: storyState.value.completedNodes,
       playerChoices: storyState.value.playerChoices,
       currentStageId: storyState.value.currentStageId,
       currentStage: currentStage.value,
-      caseTruth,
-      evidenceChain,
-      npcProfiles,
-      interruptionRules,
       interrogationState: storyState.value.interrogation,
       targetCharacter,
       speakingOrder,
-      sceneMemory: sceneMemory.value,
-      npcMemory: npcMemory.value,
+      sceneMemory: {
+        summary: sceneMemory.value.summary,
+        recentTurns: sceneMemory.value.recentTurns.slice(-8),
+        evidence: sceneMemory.value.evidence,
+        flags: sceneMemory.value.flags,
+      },
+      npcMemory: Object.fromEntries(
+        Object.entries(npcMemory.value).map(([id, memory]) => [
+          id,
+          {
+            stance: memory.stance,
+            lastClaims: memory.lastClaims.slice(-3),
+          },
+        ])
+      ),
     };
   };
 
@@ -198,7 +205,7 @@ export function useStoryState(getCharacterName, options = {}) {
 
   const advanceStory = (nextNodeId) => {
     if (!storyNodes[nextNodeId]) return;
-    pendingSuggestedNextNode.value = null;
+    pendingStoryNode.value = null;
     const currentId = storyState.value.currentNodeId;
     if (!storyState.value.completedNodes.includes(currentId)) {
       storyState.value.completedNodes.push(currentId);
@@ -211,8 +218,8 @@ export function useStoryState(getCharacterName, options = {}) {
   };
 
   const continueStory = () => {
-    if (pendingSuggestedNextNode.value) {
-      advanceStory(pendingSuggestedNextNode.value);
+    if (pendingStoryNode.value) {
+      advanceStory(pendingStoryNode.value);
       return;
     }
     const node = currentNode.value;
@@ -265,7 +272,6 @@ export function useStoryState(getCharacterName, options = {}) {
 
   const decideSpeakingOrder = (targetCharacter) => {
     if (!isFreeInteraction.value) return [targetCharacter];
-    recordInterrogationTurn(targetCharacter);
     const flags = sceneMemory.value.flags;
     const getFavorability =
       typeof options.getCharacterFavorability === 'function'
@@ -318,49 +324,117 @@ export function useStoryState(getCharacterName, options = {}) {
     return order;
   };
 
+  const textIncludesAny = (text, keywords) => {
+    const normalizedText = String(text || '').toLowerCase();
+    return keywords.some((keyword) => normalizedText.includes(keyword.toLowerCase()));
+  };
+
+  const inferProgressFromDialogue = (speaker, text) => {
+    const changed = {
+      evidence: [],
+      flags: [],
+    };
+    const markEvidenceChange = (evidenceId) => {
+      if (markEvidence(evidenceId)) changed.evidence.push(evidenceId);
+    };
+    const markFlagChange = (flagId) => {
+      if (markFlag(flagId, true)) changed.flags.push(flagId);
+    };
+
+    if (
+      speaker === 'maid' &&
+      textIncludesAny(text, ['笔迹', '纸料', '旧日', '内侍', '江南的内侍', '不像临时伪造'])
+    ) {
+      markFlagChange('maidHandwritingHint');
+      markEvidenceChange('handwritingHint');
+    }
+
+    if (
+      speaker === 'eunuch' &&
+      textIncludesAny(text, ['入宫', '乾清宫外', '偏门', '门人', '出入', '动过', '血书被'])
+    ) {
+      markFlagChange('eunuchEntryRecord');
+      markEvidenceChange('palaceEntryRecord');
+    }
+
+    if (
+      speaker === 'minister' &&
+      textIncludesAny(text, ['户部', '副账', '账册', '银两', '压下', '粮草'])
+    ) {
+      markFlagChange('ministerLedgerSuppressed');
+      markEvidenceChange('ledgerClue');
+    }
+
+    if (
+      speaker === 'minister' &&
+      textIncludesAny(text, ['臣为大局', '大局', '老臣确曾', '确曾', '压下'])
+    ) {
+      markFlagChange('ministerContradictionFound');
+    }
+
+    if (
+      hasEvidence('ledgerClue') &&
+      textIncludesAny(text, ['边军', '边疆', '粮草', '大将', '军中'])
+    ) {
+      markEvidenceChange('borderArmyLink');
+    }
+
+    return changed;
+  };
+
+  const suggestStoryProgress = () => {
+    const node = currentNode.value;
+    if (!node || node.type !== 'free_interaction' || pendingStoryNode.value) {
+      return { applied: false, reason: 'NO_TRANSITION' };
+    }
+    const canSuggest = (nodeId) =>
+      (node.nextNodes || []).includes(nodeId) &&
+      storyNodes[nodeId] &&
+      !storyState.value.completedNodes.includes(nodeId);
+
+    let nextNode = null;
+    if (sceneMemory.value.flags.finalJudgementReady && canSuggest('final_judgement')) {
+      nextNode = 'final_judgement';
+    } else if (
+      (
+        hasEvidence('handwritingHint') ||
+        hasEvidence('palaceEntryRecord') ||
+        hasEvidence('ledgerClue')
+      ) &&
+      canSuggest('evidence_chain_forming')
+    ) {
+      nextNode = 'evidence_chain_forming';
+    } else if (
+      (sceneMemory.value.flags.ministerContradictionFound || sceneMemory.value.flags.ministerLedgerSuppressed) &&
+      canSuggest('minister_breakthrough')
+    ) {
+      nextNode = 'minister_breakthrough';
+    } else if (hasEvidence('handwritingHint') && canSuggest('maid_testimony')) {
+      nextNode = 'maid_testimony';
+    } else if (hasEvidence('palaceEntryRecord') && canSuggest('eunuch_secret')) {
+      nextNode = 'eunuch_secret';
+    }
+
+    if (!nextNode) return { applied: false, reason: 'NO_TRANSITION' };
+    pendingStoryNode.value = nextNode;
+    pushSystemMessage('剧情状态已满足新的推进条件，请先阅读当前对话，再点击“继续”。');
+    return { applied: true, reason: 'STATE_MACHINE_PENDING' };
+  };
+
   const applyAgentResult = (speaker, message) => {
+    if (isFreeInteraction.value) {
+      recordInterrogationTurn(speaker);
+    }
     appendSceneTurn(message.role || speaker, message.content);
 
-    const allowedFlagBySpeaker = {
-      minister: ['ministerContradictionFound', 'ministerLedgerSuppressed'],
-      maid: ['maidHandwritingHint'],
-      eunuch: ['eunuchEntryRecord'],
-      emperor: 'emperorTrust',
-    };
-    const allowedFlags = []
-      .concat(allowedFlagBySpeaker[speaker] || [])
-      .filter(Boolean);
-    const stateUpdates = message.stateUpdates || {};
-    for (const [rawFlagId, rawValue] of Object.entries(stateUpdates)) {
-      const flagId = normalizeFlagId(rawFlagId);
-      if (allowedFlags.includes(flagId) && typeof rawValue === 'boolean') {
-        markFlag(flagId, rawValue);
-      }
-    }
-
-    const evidenceUpdates = Array.isArray(message.evidenceUpdates)
-      ? message.evidenceUpdates
-      : [];
-    for (const evidence of evidenceUpdates) {
-      if (typeof evidence === 'string') {
-        markEvidence(evidence);
-      }
-    }
-    if (sceneMemory.value.flags.maidHandwritingHint) {
-      markEvidence('handwritingHint');
-    }
-    if (sceneMemory.value.flags.eunuchEntryRecord) {
-      markEvidence('palaceEntryRecord');
-    }
-    if (sceneMemory.value.flags.ministerLedgerSuppressed) {
-      markEvidence('ledgerClue');
-    }
+    inferProgressFromDialogue(speaker, message.content);
 
     if (npcMemory.value[speaker]) {
       npcMemory.value[speaker].lastClaims.push(message.content);
       npcMemory.value[speaker].lastClaims = npcMemory.value[speaker].lastClaims.slice(-4);
     }
     updateStoryStage();
+    return suggestStoryProgress();
   };
 
   const handleStoryCharacterClick = (characterId) => {
@@ -386,40 +460,13 @@ export function useStoryState(getCharacterName, options = {}) {
     return { allowed: true, mode: 'free_interaction' };
   };
 
-  const applySuggestedNextNode = (suggestedNextNode) => {
-    const node = currentNode.value;
-    if (!node || !suggestedNextNode || suggestedNextNode === 'end') {
-      return { applied: false, reason: 'NO_TRANSITION' };
-    }
-    if (suggestedNextNode === 'final_judgement' && !sceneMemory.value.flags.finalJudgementReady) {
-      pushSystemMessage('证据链尚未完整，暂不能进入最终裁断。');
-      return { applied: false, reason: 'EVIDENCE_INCOMPLETE' };
-    }
-    if (suggestedNextNode === node.nodeId || storyState.value.completedNodes.includes(suggestedNextNode)) {
-      pushSystemMessage(`系统已忽略重复剧情跳转：${suggestedNextNode}`);
-      return { applied: false, reason: 'REPEATED_TRANSITION' };
-    }
-    const allowedNextNodes = node.nextNodes || [];
-    if (!allowedNextNodes.includes(suggestedNextNode)) {
-      pushSystemMessage(`系统已忽略非法剧情跳转：${suggestedNextNode}`);
-      return { applied: false, reason: 'INVALID_TRANSITION' };
-    }
-    if (!storyNodes[suggestedNextNode]) {
-      pushSystemMessage(`系统已忽略未配置剧情节点：${suggestedNextNode}`);
-      return { applied: false, reason: 'UNKNOWN_NODE' };
-    }
-    pendingSuggestedNextNode.value = suggestedNextNode;
-    pushSystemMessage('已触发新的剧情进展，请先阅读当前对话，再点击“继续”。');
-    return { applied: true, reason: 'PENDING' };
-  };
-
   return {
     storyState,
     sceneMemory,
     npcMemory,
     currentStage,
     nodeDialogueVisible,
-    pendingSuggestedNextNode,
+    pendingStoryNode,
     storyNotice,
     currentNode,
     getStoryContext,
@@ -436,6 +483,5 @@ export function useStoryState(getCharacterName, options = {}) {
     applyAgentResult,
     hasEvidence,
     handleStoryCharacterClick,
-    applySuggestedNextNode,
   };
 }
