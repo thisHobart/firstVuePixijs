@@ -82,7 +82,7 @@ export const characterPresets = [
   createCharacter({
     id: "player",
     name: "你",
-    title: "新科状元",
+    title: "御前带刀侍卫",
     gender: "male",
     clothesColor: "#B22222", // Firebrick red for the player
     hairColor: "#000000"
