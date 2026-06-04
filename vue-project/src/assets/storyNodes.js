@@ -74,7 +74,24 @@ export const storyNodes = {
     text: '玄烨揉了揉太阳穴：“够了。朕给你们半个时辰。在这乾清宫内，你们各执一词。侍卫，你去说服张廷玉认罪，或者让苏麻姑姑替你作证。半个时辰后，拿不出铁证，推出去斩了！”',
     lockedCharacter: null,
     availableCharacters: ['emperor', 'minister', 'maid', 'eunuch'],
-    nextNodes: ['minister_breakthrough', 'maid_testimony', 'eunuch_secret'],
+    nextNodes: [
+      'evidence_chain_forming',
+      'minister_breakthrough',
+      'maid_testimony',
+      'eunuch_secret',
+      'final_judgement',
+    ],
+  },
+
+  evidence_chain_forming: {
+    nodeId: 'evidence_chain_forming',
+    title: '证据：暗线初成',
+    type: 'narration',
+    speaker: 'system',
+    text: '血书不再只是孤证。笔迹、出入记录或户部副账的碎片开始互相咬合，殿中众人的神色都变得谨慎起来。',
+    lockedCharacter: null,
+    availableCharacters: [],
+    autoNext: 'free_interrogation',
   },
 
   minister_breakthrough: {
@@ -82,7 +99,7 @@ export const storyNodes = {
     title: '破局：张廷玉失守',
     type: 'narration',
     speaker: 'system',
-    text: '张廷玉的神色终于出现一丝裂缝。你抓住了证据链中最关键的一环，殿内风向开始变化。',
+    text: '张廷玉的神色终于出现一丝裂缝。他没有承认谋逆，却不得不承认自己见过户部副账，也曾压下过某些足以牵动朝局的线索。',
     lockedCharacter: null,
     availableCharacters: [],
     autoNext: 'free_interrogation',
@@ -108,5 +125,62 @@ export const storyNodes = {
     lockedCharacter: null,
     availableCharacters: [],
     autoNext: 'free_interrogation',
+  },
+
+  final_judgement: {
+    nodeId: 'final_judgement',
+    title: '终局：御前裁断',
+    type: 'player_input',
+    speaker: 'player',
+    text: '证据已在殿中铺开：血书、笔迹、出入记录、户部副账与边军粮草暗线彼此相连。玄烨注视着你，等你说出最后的判断。',
+    lockedCharacter: 'emperor',
+    availableCharacters: ['emperor'],
+    choices: [
+      {
+        id: 'continue_investigation',
+        text: '张廷玉压证属实，但不是谋逆主犯。臣请暗查皇子府与边军粮草线。',
+        nextNode: 'ending_best_route',
+      },
+      {
+        id: 'accuse_minister',
+        text: '张廷玉压下副账、包庇皇子，应以谋逆主犯论处。',
+        nextNode: 'ending_minister_punished',
+      },
+      {
+        id: 'accuse_prince_recklessly',
+        text: '血书已足够，臣请皇上立刻拿问涉案皇子。',
+        nextNode: 'ending_reckless_accusation',
+      },
+    ],
+  },
+
+  ending_best_route: {
+    nodeId: 'ending_best_route',
+    title: '结局：暗授密查',
+    type: 'narration',
+    speaker: 'emperor',
+    text: '玄烨沉默良久，终于缓缓开口：“张廷玉有罪，但罪不在谋逆。皇子府与边军粮草，朕要你继续查。此事不得出乾清宫半步。”',
+    lockedCharacter: null,
+    availableCharacters: [],
+  },
+
+  ending_minister_punished: {
+    nodeId: 'ending_minister_punished',
+    title: '结局：重臣失势',
+    type: 'narration',
+    speaker: 'emperor',
+    text: '张廷玉被革职候审，朝堂震动。你赢下了御前这一局，却隐约知道，真正的皇子暗线并未就此断绝。',
+    lockedCharacter: null,
+    availableCharacters: [],
+  },
+
+  ending_reckless_accusation: {
+    nodeId: 'ending_reckless_accusation',
+    title: '结局：慎刑司夜寒',
+    type: 'narration',
+    speaker: 'emperor',
+    text: '玄烨的眼神冷了下去：“血书不是圣旨，猜疑也不是证据。”你被押出乾清宫，慎刑司的灯火在夜色中亮起。',
+    lockedCharacter: null,
+    availableCharacters: [],
   },
 };
