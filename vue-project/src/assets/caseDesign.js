@@ -168,8 +168,8 @@ export const storyStages = {
   },
   stage_5: {
     name: '最终裁断',
-    goal: '玩家选择指控方向，进入对应结局。',
-    advanceWhen: '证据链足以支撑最终判断，尤其是 borderArmyLink 出现后。',
+    goal: '玩家先裁定张廷玉罪责，再由正确路线引出皇子府与边将往来暗查。',
+    advanceWhen: '证据链足以支撑御前裁断，尤其是 borderArmyLink 出现后。',
   },
 };
 

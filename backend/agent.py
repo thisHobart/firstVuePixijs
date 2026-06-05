@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from autogen_agentchat.agents import AssistantAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from characters.personas import CHARACTER_PERSONAS, DEFAULT_PERSONA
-from story_retriever import retrieve_story_context
+from story.retriever import retrieve_story_context
+from story.progress import evaluate_story_progress
 
 try:
     from autogen_ext.models.ollama import OllamaChatCompletionClient
@@ -448,6 +449,7 @@ async def generate_dialogue(
                 "favorabilityChanges": _normalize_affection_changes({}),
                 "favorabilityReasons": {},
                 "inputGuard": {"allowed": True, "reasonCode": "OK", "systemMessage": ""},
+                "storyProgress": {},
             }
 
         if last_role == "user":
@@ -467,6 +469,7 @@ async def generate_dialogue(
                     "favorabilityChanges": _normalize_affection_changes({}),
                     "favorabilityReasons": {},
                     "inputGuard": guard_result,
+                    "storyProgress": {},
                 }
         else:
             guard_result = {"allowed": True, "reasonCode": "OK", "systemMessage": ""}
@@ -534,15 +537,24 @@ async def generate_dialogue(
         if not isinstance(judge_data, dict):
             judge_data = {}
 
+        favorability_changes = _normalize_affection_changes(
+            judge_data.get("favorabilityChanges")
+        )
+        story_progress = evaluate_story_progress(
+            character,
+            responses,
+            story_context,
+            favorability_changes,
+        )
+
         return {
             "messages": responses,
-            "favorabilityChanges": _normalize_affection_changes(
-                judge_data.get("favorabilityChanges")
-            ),
+            "favorabilityChanges": favorability_changes,
             "favorabilityReasons": judge_data.get("reasons")
             if isinstance(judge_data.get("reasons"), dict)
             else {},
             "inputGuard": guard_result,
+            "storyProgress": story_progress,
         }
 
     except Exception as e:
@@ -556,4 +568,5 @@ async def generate_dialogue(
             "favorabilityChanges": _normalize_affection_changes({}),
             "favorabilityReasons": {},
             "inputGuard": {"allowed": True, "reasonCode": "OK", "systemMessage": ""},
+            "storyProgress": {},
         }

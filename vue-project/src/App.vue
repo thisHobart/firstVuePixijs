@@ -201,6 +201,7 @@ const {
   appendSceneTurn,
   decideSpeakingOrder,
   applyAgentResult,
+  applyStoryProgress,
   handleStoryCharacterClick,
 } = useStoryState(getCharacterName, {
   getCharacterFavorability: (characterId) => characterStates.value[characterId]?.favorability ?? 50,
@@ -396,6 +397,10 @@ const fetchDialogueNode = async (character, speakingOrder = [], playerTurnToReco
       !Array.isArray(data) && typeof data?.favorabilityChanges === 'object' && data.favorabilityChanges
         ? data.favorabilityChanges
         : null;
+    const storyProgress =
+      !Array.isArray(data) && typeof data?.storyProgress === 'object' && data.storyProgress
+        ? data.storyProgress
+        : null;
 
     if (inputGuard?.allowed === false) {
       const guardMessage =
@@ -477,10 +482,9 @@ const fetchDialogueNode = async (character, speakingOrder = [], playerTurnToReco
         content: message.content
       });
 
-      const transition = applyAgentResult(character, message);
-      if (transition.applied) return transition;
+      applyAgentResult(character, message);
     }
-    return { applied: false };
+    return applyStoryProgress(storyProgress);
   } catch (error) {
     console.error('Fetch操作出现问题:', error);
     conversationHistory.value.push({

@@ -132,14 +132,14 @@ export const storyNodes = {
     title: '终局：御前裁断',
     type: 'player_input',
     speaker: 'player',
-    text: '证据已在殿中铺开：血书、笔迹、出入记录、户部副账与边军粮草暗线彼此相连。玄烨注视着你，等你说出最后的判断。',
+    text: '证据已在殿中铺开。玄烨没有急着追问皇子，而是先盯住张廷玉：“他压下副账，阻你查案。侍卫，你以为此罪当如何定？”',
     lockedCharacter: 'emperor',
     availableCharacters: ['emperor'],
     choices: [
       {
-        id: 'continue_investigation',
-        text: '张廷玉压证属实，但不是谋逆主犯。臣请暗查皇子府与边军粮草线。',
-        nextNode: 'ending_best_route',
+        id: 'minister_suppressed_evidence',
+        text: '张廷玉压证属实，误国亦属重罪，但现有证据不足以定其为谋逆主犯。',
+        nextNode: 'prince_investigation_order',
       },
       {
         id: 'accuse_minister',
@@ -154,12 +154,23 @@ export const storyNodes = {
     ],
   },
 
+  prince_investigation_order: {
+    nodeId: 'prince_investigation_order',
+    title: '密旨：转查皇子',
+    type: 'narration',
+    speaker: 'emperor',
+    text: '玄烨沉默良久，终于缓缓开口：“张廷玉压证之罪，朕自会处置。你没有借势构陷重臣，也没有凭血书贸然逼朕拿问皇子，这很好。既然户部副账与兵部粮草底单已经相连，皇子府与边将往来，便由你暗中续查。”',
+    lockedCharacter: null,
+    availableCharacters: [],
+    autoNext: 'ending_best_route',
+  },
+
   ending_best_route: {
     nodeId: 'ending_best_route',
     title: '结局：暗授密查',
     type: 'narration',
-    speaker: 'emperor',
-    text: '玄烨沉默良久，终于缓缓开口：“张廷玉有罪，但罪不在谋逆。皇子府与边军粮草，朕要你继续查。此事不得出乾清宫半步。”',
+    speaker: 'system',
+    text: '证据链已成，玄烨采纳了你的密查之策。张廷玉暂退，户部副账与兵部粮草底单被密旨封存。乾清宫审问至此告一段落，你将奉旨暗查皇子府与边将往来。',
     lockedCharacter: null,
     availableCharacters: [],
   },

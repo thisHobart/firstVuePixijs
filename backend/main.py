@@ -90,7 +90,7 @@ class DialogueRequest(BaseModel):
     history: List[Message] = Field(..., min_items=1, description="完整的对话历史")
     storyContext: Dict[str, Any] | None = Field(
         default=None,
-        description="当前剧情上下文，用于约束 Agent 的 nextNode 建议",
+        description="当前剧情上下文，用于后端剧情状态判断",
     )
 
 
