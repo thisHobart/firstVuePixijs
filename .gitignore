@@ -109,3 +109,4 @@ credentials.json
 *.pem
 *.key
 config.local.js
+/.codex/
